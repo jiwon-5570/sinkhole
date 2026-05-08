@@ -263,6 +263,45 @@ CREATE TABLE IF NOT EXISTS construction_events (
     FOREIGN KEY (region_id) REFERENCES regions(region_id)
 );
 
+CREATE TABLE IF NOT EXISTS molit_ground_boreholes (
+    id INTEGER PRIMARY KEY,
+    borehole_code TEXT,
+    project_name TEXT,
+    address TEXT,
+    latitude REAL,
+    longitude REAL,
+    elevation_m REAL,
+    total_depth_m REAL,
+    source_name TEXT,
+    source_file TEXT NOT NULL,
+    source_row_number INTEGER NOT NULL,
+    raw_json TEXT,
+    UNIQUE(source_file, source_row_number)
+);
+
+CREATE TABLE IF NOT EXISTS molit_ground_layers (
+    id INTEGER PRIMARY KEY,
+    borehole_code TEXT,
+    project_name TEXT,
+    address TEXT,
+    latitude REAL,
+    longitude REAL,
+    layer_sequence INTEGER,
+    top_depth_m REAL,
+    bottom_depth_m REAL,
+    thickness_m REAL,
+    layer_name TEXT,
+    layer_color TEXT,
+    layer_description TEXT,
+    soil_class TEXT,
+    n_value REAL,
+    source_name TEXT,
+    source_file TEXT NOT NULL,
+    source_row_number INTEGER NOT NULL,
+    raw_json TEXT,
+    UNIQUE(source_file, source_row_number)
+);
+
 CREATE TABLE IF NOT EXISTS feature_dataset (
     region_id INTEGER,
     analysis_date TEXT,
@@ -302,3 +341,7 @@ CREATE INDEX IF NOT EXISTS idx_risk_region_date ON risk_analysis_result(region_i
 CREATE INDEX IF NOT EXISTS idx_risk_road_date ON road_risk_analysis_result(road_id, analysis_date);
 CREATE INDEX IF NOT EXISTS idx_raw_source_records_source ON raw_source_records(source_name, fetched_at);
 CREATE INDEX IF NOT EXISTS idx_public_data_collection_runs_started ON public_data_collection_runs(started_at);
+CREATE INDEX IF NOT EXISTS idx_molit_ground_boreholes_code ON molit_ground_boreholes(borehole_code);
+CREATE INDEX IF NOT EXISTS idx_molit_ground_boreholes_coord ON molit_ground_boreholes(latitude, longitude);
+CREATE INDEX IF NOT EXISTS idx_molit_ground_layers_code ON molit_ground_layers(borehole_code);
+CREATE INDEX IF NOT EXISTS idx_molit_ground_layers_coord ON molit_ground_layers(latitude, longitude);

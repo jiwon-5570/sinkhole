@@ -26,6 +26,12 @@ Project/backend/data/*.sqlite
 Project/backend/data/*.sqlite3
 Project/backend/data/reports/
 Project/backend/data/tmp/
+Project/backend/data/raw/**/*.csv
+Project/backend/data/raw/**/*.tsv
+Project/backend/data/raw/**/*.xlsx
+Project/backend/data/raw/**/*.xls
+Project/backend/data/raw/**/*.zip
+!Project/backend/data/raw/**/README.md
 attachments/*.pdf
 Project/backend/server*.log
 Project/backend/*.log

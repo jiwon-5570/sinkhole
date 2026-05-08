@@ -4,6 +4,7 @@ from datetime import date, datetime
 import sqlite3
 
 from app.db.core import query_one
+from app.services.ground_layers import summarize_ground_layers_for_region, summarize_ground_layers_for_road
 
 
 def today_str() -> str:
@@ -58,6 +59,24 @@ def format_client_clock_label(
     return f"{date_part} {time_part}"
 
 
+def _apply_ground_layer_adjustment(conn: sqlite3.Connection, row: dict, *, region_id: int | None = None, road_id: int | None = None) -> dict:
+    data = dict(row)
+    if region_id is not None:
+        summary = summarize_ground_layers_for_region(conn, region_id)
+    elif road_id is not None:
+        summary = summarize_ground_layers_for_road(conn, road_id)
+    else:
+        summary = {"available": False, "score": 0.0}
+
+    ground_layer_score = float(summary.get("score") or 0.0)
+    base_environment_score = float(data.get("environment_score") or 0.0)
+    data["ground_layer_score"] = round(ground_layer_score, 2)
+    data["ground_layer_nearby_count"] = int(summary.get("nearby_count") or 0)
+    data["ground_layer_summary"] = summary
+    data["environment_score"] = min(6.0, base_environment_score + ground_layer_score)
+    return data
+
+
 def load_or_build_feature_row(conn: sqlite3.Connection, region_id: int, analysis_date: str) -> dict:
     row = query_one(
         conn,
@@ -69,7 +88,7 @@ def load_or_build_feature_row(conn: sqlite3.Connection, region_id: int, analysis
         (region_id, analysis_date),
     )
     if row:
-        return row
+        return _apply_ground_layer_adjustment(conn, row, region_id=region_id)
 
     past_sinkhole_count = query_one(
         conn, "SELECT COUNT(*) AS c FROM sinkhole_history WHERE region_id = ?", (region_id,)
@@ -160,11 +179,12 @@ def load_or_build_feature_row(conn: sqlite3.Connection, region_id: int, analysis
         ),
     )
 
-    return query_one(
+    stored = query_one(
         conn,
         "SELECT * FROM feature_dataset WHERE region_id = ? AND analysis_date = ?",
         (region_id, analysis_date),
     )
+    return _apply_ground_layer_adjustment(conn, stored, region_id=region_id)
 
 
 def load_or_build_road_feature_row(conn: sqlite3.Connection, road_id: int, analysis_date: str) -> dict:
@@ -174,7 +194,7 @@ def load_or_build_road_feature_row(conn: sqlite3.Connection, road_id: int, analy
         (road_id, analysis_date),
     )
     if row:
-        return row
+        return _apply_ground_layer_adjustment(conn, row, road_id=road_id)
 
     past_sinkhole_count = query_one(
         conn, "SELECT COUNT(*) AS c FROM road_sinkhole_history WHERE road_id = ?", (road_id,)
@@ -267,8 +287,9 @@ def load_or_build_road_feature_row(conn: sqlite3.Connection, road_id: int, analy
         ),
     )
 
-    return query_one(
+    stored = query_one(
         conn,
         "SELECT * FROM road_feature_dataset WHERE road_id = ? AND analysis_date = ?",
         (road_id, analysis_date),
     )
+    return _apply_ground_layer_adjustment(conn, stored, road_id=road_id)
