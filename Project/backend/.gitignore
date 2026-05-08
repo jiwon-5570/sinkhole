@@ -1,0 +1,7 @@
+.venv/
+__pycache__/
+*.pyc
+db/app.db
+.env
+cloudrun.env
+data/reports/

@@ -1,0 +1,528 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate">
+  <meta http-equiv="Pragma" content="no-cache">
+  <meta http-equiv="Expires" content="0">
+  <title>SinkHole 대시보드</title>
+  <link rel="stylesheet" href="/static/styles.css?v=20260508-live-public-api" onerror="this.onerror=null;this.href='styles.css?v=20260508-live-public-api';">
+</head>
+<body>
+  <div class="app-shell">
+    <aside class="sidebar">
+      <div class="sidebar-brand">
+        <div class="brand-mark" aria-hidden="true">
+          <svg viewBox="0 0 32 32" role="img">
+            <path d="M16 2 28 9v14l-12 7-12-7V9L16 2Z"></path>
+            <path d="M16 8 23 12v8l-7 4-7-4v-8l7-4Z"></path>
+          </svg>
+        </div>
+        <div>
+          <strong>SinkHole</strong>
+          <span>Risk Platform</span>
+        </div>
+      </div>
+
+      <nav class="sidebar-nav" aria-label="주요 메뉴">
+        <a id="dashboardLink" href="" class="sidebar-item active">
+          <span class="nav-icon" aria-hidden="true">▦</span>
+          <span>대시보드</span>
+        </a>
+        <button class="sidebar-item" type="button" data-section="map-panel">
+          <span class="nav-icon" aria-hidden="true">⌖</span>
+          <span>위험도 지도</span>
+        </button>
+        <button class="sidebar-item" type="button" data-section="top5-panel">
+          <span class="nav-icon" aria-hidden="true">▤</span>
+          <span>지역 분석</span>
+        </button>
+        <button id="openWhatIfPanelButton" class="sidebar-item" type="button">
+          <span class="nav-icon" aria-hidden="true">↗</span>
+          <span>예측 분석</span>
+        </button>
+        <button id="openAiChatButton" class="sidebar-item" type="button">
+          <span class="nav-icon" aria-hidden="true">AI</span>
+          <span>AI Chat</span>
+        </button>
+        <button class="sidebar-item" type="button" data-section="report-panel">
+          <span class="nav-icon" aria-hidden="true">□</span>
+          <span>보고서</span>
+        </button>
+        <button id="helpToggle" class="sidebar-item" type="button">
+          <span class="nav-icon" aria-hidden="true">?</span>
+          <span>도움말</span>
+        </button>
+        <a id="apiDocsLink" class="sidebar-item muted-link" href="http://127.0.0.1:5000/docs" target="_blank" rel="noreferrer">
+          <span class="nav-icon" aria-hidden="true">{ }</span>
+          <span>API Docs</span>
+        </a>
+      </nav>
+
+      <div class="sidebar-profile">
+        <div class="profile-badge" aria-hidden="true">A</div>
+        <div>
+          <span>관리자</span>
+        </div>
+      </div>
+    </aside>
+
+    <main class="main-view">
+      <header class="topbar">
+        <div class="topbar-copy">
+          <p id="heroKicker" class="eyebrow">대시보드</p>
+          <h1 id="pageTitle">Sinkhole Risk Dashboard</h1>
+          <p id="heroDescription">진주지역 지반침하 위험 현황과 지역별 분석을 한 화면에서 확인합니다.</p>
+        </div>
+        <div class="topbar-actions">
+          <span class="status-pill">
+            <span class="status-dot"></span>
+            <span id="healthStatus">확인 중</span>
+          </span>
+          <div class="date-widget" aria-label="분석 시각">
+            <span id="metricDate">-</span>
+          </div>
+          <button id="helpToggleTop" class="icon-button" type="button" aria-label="도움말">
+            <span aria-hidden="true">?</span>
+          </button>
+          <div id="quickMenu" class="quick-menu">
+            <button id="quickMenuButton" class="icon-button" type="button" aria-expanded="false" aria-label="빠른 메뉴">
+              <span aria-hidden="true">⋯</span>
+            </button>
+            <div id="quickMenuPanel" class="quick-menu-panel hidden">
+              <button id="scenarioModeMenuButton" type="button">시나리오 모드</button>
+              <button id="liveModeMenuButton" type="button">실시간 모드</button>
+              <button type="button" data-section="report-panel">보고서 보기</button>
+            </div>
+          </div>
+        </div>
+      </header>
+
+      <section class="metric-grid" aria-label="핵심 지표">
+        <article class="metric-card metric-average metric-detail-card" data-metric-detail="averageRisk" role="button" tabindex="0" aria-label="진주지역 평균 위험도 상세 보기">
+          <div class="metric-copy">
+            <span>진주지역 평균 위험도</span>
+            <strong id="metricAverage">-</strong>
+            <small id="averageRiskLabel">중간</small>
+          </div>
+          <div class="mini-ring" aria-hidden="true">
+            <span></span>
+          </div>
+        </article>
+        <article class="metric-card metric-detail-card" data-metric-detail="forecastRegions" role="button" tabindex="0" aria-label="예측 지역 수 상세 보기">
+          <span>예측 지역 수</span>
+          <strong><span id="metricRegionCount">-</span><small>개</small></strong>
+          <em>분석 대상 지역</em>
+        </article>
+        <article class="metric-card metric-detail-card" data-metric-detail="highRiskRegions" role="button" tabindex="0" aria-label="높은 위험 지역 상세 보기">
+          <span>높은 위험 지역</span>
+          <strong><span id="metricHighRisk">-</span><small>개</small></strong>
+          <em>고위험 이상</em>
+        </article>
+        <article class="metric-card metric-detail-card" data-metric-detail="monitoringPoints" role="button" tabindex="0" aria-label="모니터링 지점 상세 보기">
+          <span>모니터링 지점</span>
+          <strong><span id="metricMonitoring">-</span><small>개</small></strong>
+          <em>실제 센서 연동 기준</em>
+        </article>
+        <article class="metric-card compact metric-detail-card" data-metric-detail="recentDetections" role="button" tabindex="0" aria-label="최근 탐지 건수 상세 보기">
+          <span>최근 탐지 건수</span>
+          <strong><span id="metricRecentCount">-</span><small>건</small></strong>
+          <em>최근 24시간 기준</em>
+        </article>
+      </section>
+
+      <section class="control-panel" aria-label="분석 조건">
+        <div>
+          <p id="controlsTitle" class="eyebrow">분석 컨트롤</p>
+          <h2 id="heroHeadline">지반침하 위험 분석</h2>
+          <p id="controlsDescription">지역과 날짜를 선택한 뒤 위험도 분석 또는 AI 리포트를 실행합니다.</p>
+          <div class="mode-toggle primary-action-group">
+            <button id="analyzeButton" class="primary" type="button" data-action="analyze" onclick="event.stopPropagation(); if (window.__sinkholeActions) window.__sinkholeActions.analyze(); return false;">위험도 분석</button>
+            <button id="reportButton" class="secondary" type="button" data-action="report" onclick="event.stopPropagation(); if (window.__sinkholeActions) window.__sinkholeActions.report(); return false;">AI 리포트 생성</button>
+          </div>
+        </div>
+
+        <div class="control-grid">
+          <label class="field">
+            <span id="analysisTypeLabel">분석 단위</span>
+            <select id="analysisType">
+              <option value="region">지역 단위</option>
+              <option value="road">도로 단위</option>
+            </select>
+          </label>
+          <label class="field">
+            <span id="regionLabel">지역</span>
+            <select id="regionSelect"></select>
+          </label>
+          <label id="roadControlsContainer" class="field hidden">
+            <span id="roadLabel">도로</span>
+            <select id="roadSelect"></select>
+          </label>
+          <label class="field">
+            <span id="analysisDateLabel">분석일</span>
+            <input id="analysisDate" type="date">
+          </label>
+        </div>
+
+        <div id="liveControls" class="live-controls hidden">
+          <label class="field">
+            <span id="locationSearchLabel">위치 검색</span>
+            <div class="inline-field">
+              <input id="liveLocationInput" type="text" placeholder="예: 진주역, 경남">
+              <button id="pickOnMapButton" class="secondary" type="button">지도에서 선택</button>
+            </div>
+          </label>
+          <label class="field">
+            <span id="applyLocationLabel">위치 적용</span>
+            <button id="applyLocationButton" class="secondary" type="button">지도에 적용</button>
+          </label>
+        </div>
+
+        <p id="statusText" class="status-text">초기 데이터를 불러오는 중입니다.</p>
+      </section>
+
+      <section class="dashboard-grid">
+        <article id="map-panel" class="panel map-panel">
+          <div class="panel-head">
+            <div>
+              <p class="eyebrow">위험도 지도</p>
+              <h3 id="mapTitle">진주지역 지반침하 위험도</h3>
+              <p id="mapDescription">지역별 위험 점수와 우선 점검 대상을 지도에서 확인합니다.</p>
+            </div>
+            <div id="mapLegend" class="map-legend"></div>
+          </div>
+          <div class="map-wrap">
+            <svg id="demoMap" class="demo-map" viewBox="0 0 760 520" aria-label="위험도 지도"></svg>
+            <div id="googleMap" class="google-map hidden"></div>
+            <div id="mapOverlay" class="map-overlay"></div>
+            <div id="mapPickLayer" class="map-pick-layer hidden" role="button" tabindex="0">
+              <span>지도를 클릭해 위치 선택</span>
+            </div>
+          </div>
+          <div id="mapNotes" class="map-notes"></div>
+        </article>
+
+        <article class="panel overview-panel">
+          <div class="panel-head">
+            <div>
+              <p class="eyebrow">오늘의 위험 개요</p>
+              <h3 id="resultTitle">선택 지역 분석 결과</h3>
+            </div>
+          </div>
+          <div class="overview-card">
+            <div>
+              <span id="selectedRegionText">-</span>
+              <strong id="resultLevel">-</strong>
+              <small>우선순위 <b id="resultPriority">-</b></small>
+            </div>
+            <div class="score-ring" aria-label="위험 점수">
+              <span id="resultScore">-</span>
+              <small>/100</small>
+            </div>
+          </div>
+          <div class="overview-stats">
+            <div><span>주의</span><strong id="overviewWatchCount">-</strong></div>
+            <div><span>경계</span><strong id="overviewWarnCount">-</strong></div>
+            <div><span>심각</span><strong id="overviewHighCount">-</strong></div>
+            <div><span>도로명 주소</span><strong id="resultCoords">-</strong></div>
+          </div>
+          <div class="factor-block">
+            <div class="section-title">
+              <h4>위험 기여 요인</h4>
+              <span>score</span>
+            </div>
+            <div id="factorChart" class="bar-list"></div>
+            <p id="dataSourcesText" class="data-source">데이터 출처: 공공데이터포털(KALIS 공공시설물, MOLIT 지하안전/지반침하, KMA ASOS 강우, 건축HUB 인허가 원본)</p>
+          </div>
+        </article>
+
+        <article id="top5-panel" class="panel top5-panel">
+          <div class="panel-head">
+            <div>
+              <p class="eyebrow">주요 변동 지역</p>
+              <h3 id="top5Title">우선 점검 TOP 5</h3>
+              <p id="top5Description">최신 위험 점수 기준 정렬</p>
+            </div>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>순위</th>
+                  <th>지역</th>
+                  <th>점수</th>
+                  <th>단계</th>
+                </tr>
+              </thead>
+              <tbody id="topRiskBody"></tbody>
+            </table>
+          </div>
+        </article>
+
+        <article class="panel trend-panel">
+          <div class="panel-head">
+            <div>
+              <p class="eyebrow">위험도 추이</p>
+              <h3 id="trendTitle">지역 위험도 추이</h3>
+              <p id="trendDescription">선택 지역 분석 이력 기준</p>
+            </div>
+            <div class="segmented-control" aria-label="기간">
+              <button type="button">7일</button>
+              <button class="active" type="button">30일</button>
+              <button type="button">90일</button>
+            </div>
+          </div>
+          <div id="trendChart" class="chart-area"></div>
+        </article>
+
+        <article class="panel insight-panel">
+          <div class="panel-head">
+            <div>
+              <p class="eyebrow">주요 분석 결과</p>
+              <h3 id="distributionTitle">위험 등급 분포</h3>
+              <p id="distributionDescription">최신 분석 결과 기준</p>
+            </div>
+          </div>
+          <div id="distributionChart" class="bar-list"></div>
+        </article>
+
+        <article class="panel cause-panel">
+          <div class="panel-head">
+            <div>
+              <p class="eyebrow">과거 이력</p>
+              <h3 id="causeTitle">지반침하 원인 분포</h3>
+              <p id="causeDescription">선택 지역의 원인 유형별 건수</p>
+            </div>
+          </div>
+          <div id="causeChart" class="bar-list"></div>
+        </article>
+
+        <article class="panel reason-panel">
+          <div class="panel-head">
+            <div>
+              <p class="eyebrow">AI 예측 코멘트</p>
+              <h3 id="reasonTitle">AI 원인 설명 카드</h3>
+              <p id="reasonDescription">위험 점수 산정 근거를 요약합니다.</p>
+            </div>
+          </div>
+          <div id="reasonCards" class="reason-cards"></div>
+        </article>
+      </section>
+
+      <section class="lower-grid">
+        <article class="panel alerts-panel">
+          <div class="panel-head">
+            <div>
+              <p class="eyebrow">최근 탐지 및 알림</p>
+              <h3>탐지 목록</h3>
+            </div>
+            <button class="secondary small" type="button">전체 알림 보기</button>
+          </div>
+          <div class="alerts-table">
+            <div class="alerts-row header">
+              <span>탐지 시간</span><span>지역</span><span>유형</span><span>위험도</span><span>상태</span>
+            </div>
+            <div class="alerts-row"><span>-</span><span>실제 탐지 이벤트 데이터가 아직 연동되지 않았습니다.</span><span>-</span><span>-</span><span>-</span></div>
+          </div>
+        </article>
+
+        <article id="report-panel" class="panel report-panel">
+          <div class="panel-head">
+            <div>
+              <p class="eyebrow">보고서 관리</p>
+              <h3 id="reportTitle">AI 리포트</h3>
+              <p id="reportDescription">분석 결과 기반 요약 리포트</p>
+            </div>
+            <button id="refreshReportsButton" class="secondary small" type="button">새로고침</button>
+          </div>
+          <pre id="reportText" class="report-text">리포트를 생성하면 이 영역에 요약이 표시됩니다.</pre>
+          <div class="report-toolbar">
+            <label class="check-field">
+              <input id="selectAllReports" type="checkbox">
+              <span>전체 선택</span>
+            </label>
+            <span id="selectedReportsInfo">선택된 PDF 0개</span>
+            <button id="openSelectedReportsButton" class="secondary small" type="button">열기</button>
+            <button id="downloadSelectedReportsButton" class="secondary small" type="button">다운로드</button>
+            <button id="deleteSelectedReportsButton" class="danger small" type="button">삭제</button>
+          </div>
+          <div id="reportList" class="report-list"></div>
+        </article>
+      </section>
+    </main>
+  </div>
+
+  <aside id="whatIfDrawer" class="whatif-drawer hidden" aria-label="What-If 시뮬레이션">
+    <div class="drawer-card">
+      <div class="panel-head">
+        <div>
+          <p class="eyebrow">예측 분석</p>
+          <h3>What-If 시뮬레이션</h3>
+        </div>
+        <button id="closeWhatIfPanelButton" class="icon-button" type="button" aria-label="닫기">×</button>
+      </div>
+      <label class="field">
+        <span>시나리오 프리셋</span>
+        <select id="whatIfPreset">
+          <option value="custom">직접 설정</option>
+          <option value="heavy_rain">집중호우 24시간</option>
+          <option value="typhoon">태풍/장마 72시간</option>
+          <option value="excavation">대형 굴착공사</option>
+          <option value="groundwater">지하수 급변</option>
+          <option value="pipe_damage">관로 파손 의심</option>
+        </select>
+      </label>
+      <label class="field">
+        <span>예측 기간</span>
+        <select id="whatIfHorizon">
+          <option value="6">6시간</option>
+          <option value="24" selected>24시간</option>
+          <option value="72">3일</option>
+          <option value="168">7일</option>
+        </select>
+      </label>
+      <div class="drawer-grid">
+        <label class="field">
+          <span>추가 강우량 <b id="whatIfRainfallValue">0mm</b></span>
+          <input id="whatIfRainfall" type="range" min="0" max="300" value="0" step="10">
+        </label>
+        <label class="field">
+          <span>지하수위 변화 <b id="whatIfGroundwaterValue">0.0m</b></span>
+          <input id="whatIfGroundwater" type="range" min="-2" max="3" value="0" step="0.1">
+        </label>
+        <label class="field">
+          <span>굴착 깊이 <b id="whatIfDepthValue">0m</b></span>
+          <input id="whatIfDepth" type="range" min="0" max="40" value="0" step="1">
+        </label>
+        <label class="field">
+          <span>공사장 거리 <b id="whatIfDistanceValue">500m</b></span>
+          <input id="whatIfDistance" type="range" min="0" max="1000" value="500" step="50">
+        </label>
+        <label class="field">
+          <span>GPR 이상 신호 <b id="whatIfGprValue">0개</b></span>
+          <input id="whatIfGpr" type="range" min="0" max="10" value="0" step="1">
+        </label>
+        <label class="field">
+          <span>시설물 노후 보정 <b id="whatIfFacilityValue">0점</b></span>
+          <input id="whatIfFacility" type="range" min="0" max="50" value="0" step="5">
+        </label>
+      </div>
+      <label class="check-field">
+        <input id="whatIfConstruction" type="checkbox">
+        <span>대규모 공사 영향 반영</span>
+      </label>
+      <p id="whatIfSummary" class="status-text">추가 강우 0mm / 대규모 공사 없음</p>
+      <button id="simulateRiskButton" class="primary" type="button">시뮬레이션 실행</button>
+      <div id="whatIfResults" class="whatif-results"></div>
+    </div>
+  </aside>
+
+  <dialog id="aiChatDialog" class="ai-chat-dialog">
+    <div class="ai-chat-panel">
+      <div class="ai-chat-head">
+        <div>
+          <p class="eyebrow">AI Chat</p>
+          <h3>싱크홀 위험 상담</h3>
+          <p>현재 분석 데이터 기준으로 위험 지역, 이유, 관리 방안을 문장형으로 답합니다.</p>
+        </div>
+        <button id="aiChatClose" class="close-button" type="button">닫기</button>
+      </div>
+      <div id="aiChatMessages" class="ai-chat-messages" aria-live="polite"></div>
+      <div class="ai-chat-prompts" aria-label="추천 질문">
+        <button type="button" data-chat-prompt="현재 가장 위험한 지역이 어디야?">가장 위험한 지역</button>
+        <button type="button" data-chat-prompt="그 지역이 위험한 이유가 뭐야?">위험한 이유</button>
+        <button type="button" data-chat-prompt="위험 점수를 낮추려면 무엇을 해야 해?">점수 낮추기</button>
+      </div>
+      <form id="aiChatForm" class="ai-chat-form">
+        <input id="aiChatInput" type="text" placeholder="예: 대한민국에서 현재 싱크홀 위험도가 가장 높은 곳이 어디야?" autocomplete="off">
+        <button id="aiChatSendButton" class="primary" type="submit">전송</button>
+      </form>
+    </div>
+  </dialog>
+
+  <dialog id="metricDetailDialog" class="metric-detail-dialog">
+    <div class="metric-detail-card-panel">
+      <div class="metric-detail-head">
+        <div>
+          <p class="eyebrow">상세 분석</p>
+          <h3 id="metricDetailTitle">지표 상세</h3>
+          <p id="metricDetailSubtitle">선택한 지표의 근거와 관리 방안을 확인합니다.</p>
+        </div>
+        <button id="metricDetailClose" class="close-button" type="button">닫기</button>
+      </div>
+      <div class="metric-detail-body">
+        <section class="metric-detail-map-panel">
+          <div id="metricDetailMap" class="metric-detail-map"></div>
+          <div id="metricDetailList" class="metric-detail-list"></div>
+        </section>
+        <section class="metric-detail-ai-panel">
+          <div class="ai-summary-box">
+            <p class="eyebrow">AI 근거 설명</p>
+            <div id="metricDetailSummary"></div>
+          </div>
+          <div class="ai-action-box">
+            <p class="eyebrow">관리 및 점수 저감 방안</p>
+            <div id="metricDetailActions"></div>
+          </div>
+        </section>
+      </div>
+    </div>
+  </dialog>
+
+  <dialog id="helpDialog" class="help-dialog">
+    <div class="help-card">
+      <div class="help-head">
+        <div>
+          <p id="helpEyebrow" class="eyebrow">도움말</p>
+          <h3 id="helpTitle">모드 및 사용 가이드</h3>
+        </div>
+        <button id="helpClose" class="close-button" type="button">닫기</button>
+      </div>
+      <div class="help-body">
+        <section class="help-section">
+          <h4 id="helpLangTitle">언어 설정</h4>
+          <p id="helpLangDesc">UI 언어를 선택하고 즉시 적용합니다.</p>
+          <div class="mode-toggle">
+            <select id="languageSelect">
+              <option value="ko">한국어</option>
+              <option value="en">English</option>
+            </select>
+            <button id="applyLanguageButton" class="secondary" type="button">적용</button>
+          </div>
+        </section>
+        <section class="help-section">
+          <h4 id="helpModeTitle">모드 전환</h4>
+          <p id="helpModeDesc">시나리오 모드는 내부 데이터, 실시간 모드는 입력 위치를 기반으로 분석합니다.</p>
+          <div class="mode-toggle help-mode-toggle">
+            <button id="helpDemoModeButton" class="secondary" type="button">시나리오 모드</button>
+            <button id="helpLiveModeButton" class="secondary" type="button">실시간 모드</button>
+          </div>
+          <ul>
+            <li id="helpModeScenarioDesc">시나리오 모드는 사전 구축된 지역 및 도로 데이터를 사용합니다.</li>
+            <li id="helpModeLiveDesc">실시간 모드는 위치명을 입력해 상용 분석 API를 실행합니다.</li>
+          </ul>
+        </section>
+        <section class="help-section">
+          <h4 id="helpMapTitle">지도 안내</h4>
+          <p id="helpMapDesc1">위험도 색상은 낮음, 중간, 높음, 매우 높음 단계로 표시됩니다.</p>
+          <p id="helpMapDesc2">지도 위 점을 클릭하면 해당 지역 분석을 바로 실행합니다.</p>
+        </section>
+        <section class="help-section">
+          <h4 id="helpAnalysisTitle">분석 지표 설명</h4>
+          <ul>
+            <li id="helpAnalysisLi1"><strong>과거 지반침하</strong>: 발생 빈도와 규모를 반영합니다.</li>
+            <li id="helpAnalysisLi2"><strong>GPR</strong>: 지중 공동 탐사 결과를 반영합니다.</li>
+            <li id="helpAnalysisLi3"><strong>시설물</strong>: 지하시설물 노후도와 상태를 반영합니다.</li>
+            <li id="helpAnalysisLi4"><strong>강우량</strong>: 최근 강우로 인한 지반 약화 가능성을 반영합니다.</li>
+            <li id="helpAnalysisLi5"><strong>지하수</strong>: 지하수위 변동을 반영합니다.</li>
+          </ul>
+          <p id="helpAnalysisDesc">지표를 종합해 <strong>최종 위험 점수(0~100)</strong>를 산출합니다.</p>
+        </section>
+      </div>
+    </div>
+  </dialog>
+
+  <script src="/static/app.js?v=20260508-live-public-api" onerror="this.onerror=null;this.src='app.js?v=20260508-live-public-api';"></script>
+</body>
+</html>

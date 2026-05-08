@@ -1,0 +1,41 @@
+# Environments
+.env
+.env.*
+cloudrun.env
+cloudrun.env.*
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Virtual environments
+.venv/
+.venv-*/
+Project/backend/.venv/
+
+# Local app data and generated files
+Project/backend/db/*.db
+Project/backend/db/*.sqlite
+Project/backend/db/*.sqlite3
+Project/backend/data/*.db
+Project/backend/data/*.sqlite
+Project/backend/data/*.sqlite3
+Project/backend/data/reports/
+Project/backend/data/tmp/
+attachments/*.pdf
+Project/backend/server*.log
+Project/backend/*.log
+Project/backend/*.err
+Project/backend/*.out
+Project/backend/ui-check*.png
+Project/backend/.edge-profile*/
+
+# OS / editor
+.vscode/
+*.lnk
+Thumbs.db
+Desktop.ini
