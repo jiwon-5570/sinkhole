@@ -3,6 +3,10 @@
 .env.*
 cloudrun.env
 cloudrun.env.*
+!.env.example
+!Project/backend/.env.example
+!cloudrun.env.example
+!Project/backend/cloudrun.env.example
 
 # Python
 __pycache__/

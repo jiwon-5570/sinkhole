@@ -35,7 +35,30 @@ data/raw/public/molit_ground_layers/
 국토교통부_지반정보_지층정보_20230831.csv
 ```
 
-시추공 좌표 파일도 승인받았다면 아래 위치에 함께 둡니다.
+시추공 데이터는 공공데이터포털에서 승인된 OpenAPI를 `PUBLIC_DATA_API_KEY`로 자동 수집합니다. 직접 파일을 넣지 않아도 됩니다.
+
+기본 API:
+
+```text
+https://api.odcloud.kr/api/15069365/v1/uddi:e3857d80-b97e-4693-84d5-f2b4f37959f0
+```
+
+수집:
+
+```powershell
+POST /api/public-data/refresh
+```
+
+좌표 변환 기준은 기본 `EPSG:5181`입니다. 다른 좌표계로 확인되면 `.env`에서 변경합니다.
+
+```env
+SINKHOLE_MOLIT_BOREHOLE_COORD_CRS=EPSG:5181
+SINKHOLE_MOLIT_BOREHOLE_ROWS_PER_PAGE=1000
+SINKHOLE_MOLIT_BOREHOLE_MAX_PAGES=10
+SINKHOLE_MOLIT_BOREHOLE_REFRESH_DAYS=30
+```
+
+아래 폴더는 API 장애 시의 보조 수동 적재용입니다.
 
 ```text
 data/raw/public/molit_boreholes/

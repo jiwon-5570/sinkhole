@@ -12,17 +12,18 @@ Project/backend/data/raw/public/molit_ground_layers/
 
 Put the downloaded `국토교통부_지반정보_지층정보_*.csv` file in that folder.
 
-Optional borehole CSV:
+The borehole dataset is collected through the approved OpenAPI with `PUBLIC_DATA_API_KEY`, so you usually do not need to place a borehole CSV manually.
+
+Fallback borehole CSV:
 
 ```text
 Project/backend/data/raw/public/molit_boreholes/
 ```
 
-If you also download `국토교통부_지반정보_시추공_*.csv`, put it in that folder. The layer data is more useful for map-based analysis when a borehole file supplies coordinates for each borehole.
+Use that folder only if the OpenAPI is unavailable and you downloaded `국토교통부_지반정보_시추공_*.csv` separately.
 
 Import command from `Project/backend`:
 
 ```powershell
 python scripts/import_molit_ground_data.py
 ```
-

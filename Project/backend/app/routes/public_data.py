@@ -4,6 +4,7 @@ import sqlite3
 
 from fastapi import APIRouter, Depends
 
+from app.config.settings import settings
 from app.main_deps import get_db
 from app.services.public_data_collector import collect_public_data_once, get_public_data_status
 from app.utils.response import ok
@@ -26,6 +27,13 @@ def refresh_public_data() -> dict:
 def ground_layers_status(conn: sqlite3.Connection = Depends(get_db)) -> dict:
     layer_count = conn.execute("SELECT COUNT(*) FROM molit_ground_layers").fetchone()[0]
     borehole_count = conn.execute("SELECT COUNT(*) FROM molit_ground_boreholes").fetchone()[0]
+    borehole_coord_count = conn.execute(
+        """
+        SELECT COUNT(*)
+        FROM molit_ground_boreholes
+        WHERE latitude IS NOT NULL AND longitude IS NOT NULL
+        """
+    ).fetchone()[0]
     layer_coord_count = conn.execute(
         """
         SELECT COUNT(*)
@@ -42,8 +50,13 @@ def ground_layers_status(conn: sqlite3.Connection = Depends(get_db)) -> dict:
         {
             "ground_layers": int(layer_count),
             "ground_boreholes": int(borehole_count),
+            "ground_boreholes_with_coordinates": int(borehole_coord_count),
             "ground_layers_with_coordinates": int(layer_coord_count),
+            "borehole_api_enabled": bool(settings.molit_borehole_api_enabled),
+            "borehole_api_url": settings.molit_borehole_api_url,
+            "borehole_coord_crs": settings.molit_borehole_coord_crs,
             "layers_file_dir": "Project/backend/data/raw/public/molit_ground_layers",
             "boreholes_file_dir": "Project/backend/data/raw/public/molit_boreholes",
+            "boreholes_file_dir_note": "fallback only; the approved OpenAPI is collected with PUBLIC_DATA_API_KEY",
         }
     )

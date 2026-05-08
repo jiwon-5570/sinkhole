@@ -20,7 +20,7 @@
 - KALIS 공공시설물 안전관리/점검진단
 - MOLIT 지하안전정보
 - MOLIT 지반침하 사고 이력
-- MOLIT 지반정보 파일데이터: 지층정보/시추공 CSV 수동 적재
+- MOLIT 지반정보: 지층정보 CSV 수동 적재, 시추공 OpenAPI 자동 수집
 - KMA ASOS 시간 강우
 - MOLIT 건축HUB 건축 인허가
 
@@ -34,19 +34,33 @@
 Project/backend/data/raw/public/molit_ground_layers/
 ```
 
-시추공 CSV 위치:
+시추공 데이터는 승인된 OpenAPI를 `PUBLIC_DATA_API_KEY`로 자동 수집합니다. 별도 파일을 직접 넣지 않아도 됩니다.
+
+기본 API:
+
+```text
+https://api.odcloud.kr/api/15069365/v1/uddi:e3857d80-b97e-4693-84d5-f2b4f37959f0
+```
+
+좌표 변환 기준은 기본 `EPSG:5181`입니다. 필요하면 `.env`에서 `SINKHOLE_MOLIT_BOREHOLE_COORD_CRS`로 바꿀 수 있습니다.
+
+시추공 CSV 위치는 API 장애 시의 보조 수동 적재용입니다.
 
 ```text
 Project/backend/data/raw/public/molit_boreholes/
 ```
-
-`지층정보`만 넣어도 DB 적재는 가능하지만, 지도에서 선택한 위치 주변 지층을 찾으려면 좌표가 필요합니다. CSV 안에 위도/경도가 없으면 `국토교통부_지반정보_시추공` 파일도 함께 넣는 것을 권장합니다.
 
 적재 명령:
 
 ```powershell
 cd .\Project\backend
 python .\scripts\import_molit_ground_data.py
+```
+
+API 수집은 대시보드 시작/주기 수집 또는 아래 엔드포인트로 실행됩니다.
+
+```text
+POST /api/public-data/refresh
 ```
 
 ## 빠른 실행

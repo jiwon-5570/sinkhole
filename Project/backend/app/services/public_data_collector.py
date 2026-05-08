@@ -25,6 +25,7 @@ LOGGER = logging.getLogger(__name__)
 SOURCE_BUNDLE = "approved_public_data_bundle"
 _RUN_LOCK = threading.Lock()
 _WORKING_API_VARIANTS: dict[str, tuple[str, str]] = {}
+_COORD_TRANSFORMERS: dict[str, Any] = {}
 
 
 @dataclass(frozen=True)
@@ -88,6 +89,20 @@ APPROVED_SOURCES = (
         scope="region",
         normalizer="construction_permit",
         max_rows_per_page=100,
+    ),
+    *(
+        (
+            PublicDataSource(
+                name="molit_ground_boreholes",
+                label="MOLIT ground information boreholes",
+                url=settings.molit_borehole_api_url,
+                scope="global",
+                normalizer="borehole",
+                max_rows_per_page=1000,
+            ),
+        )
+        if settings.molit_borehole_api_enabled
+        else ()
     ),
 )
 
@@ -265,6 +280,16 @@ def _ensure_normalized_table_columns(conn: sqlite3.Connection) -> None:
     _ensure_column(conn, "weather_data", "source_record_id", "TEXT")
     _ensure_column(conn, "weather_data", "station_id", "TEXT")
     _ensure_column(conn, "weather_data", "station_name", "TEXT")
+    for column_name, column_type in {
+        "raw_x": "REAL",
+        "raw_y": "REAL",
+        "coordinate_crs": "TEXT",
+        "groundwater_level_m": "REAL",
+        "borehole_method": "TEXT",
+        "borehole_type": "TEXT",
+        "source_record_id": "TEXT",
+    }.items():
+        _ensure_column(conn, "molit_ground_boreholes", column_name, column_type)
 
 
 def _stable_json(value: Any) -> str:
@@ -333,6 +358,10 @@ def _as_list(value: Any) -> list[Any]:
 
 
 def _extract_items(payload: dict[str, Any]) -> list[dict[str, Any]]:
+    data = _ci_get(payload, "data")
+    if isinstance(data, list):
+        return [item for item in data if isinstance(item, dict)]
+
     response = _ci_get(payload, "response", payload)
     body = _ci_get(response, "body", response)
     items = _ci_get(body, "items")
@@ -346,6 +375,13 @@ def _extract_items(payload: dict[str, Any]) -> list[dict[str, Any]]:
 
 
 def _response_total_count(payload: dict[str, Any]) -> int:
+    try:
+        value = _ci_get(payload, "totalCount")
+        if value is not None:
+            return int(value or 0)
+    except (TypeError, ValueError):
+        pass
+
     response = _ci_get(payload, "response", payload)
     body = _ci_get(response, "body", response)
     try:
@@ -387,6 +423,8 @@ def _csv_values(value: str | None) -> list[str]:
 
 
 def _source_rows(source: PublicDataSource) -> int:
+    if source.name == "molit_ground_boreholes":
+        return min(max(1, int(settings.molit_borehole_rows_per_page)), source.max_rows_per_page)
     if source.name == "ground_subsidence_accident":
         return source.max_rows_per_page
     if source.name == "kma_asos_hourly_rainfall":
@@ -429,6 +467,12 @@ def _source_params(source: PublicDataSource, page_no: int, region: dict[str, Any
     rows = _source_rows(source)
     if source.name == "kma_asos_hourly_rainfall":
         return _weather_params(source, page_no)
+    if source.name == "molit_ground_boreholes":
+        return {
+            "page": page_no,
+            "perPage": _source_rows(source),
+            "returnType": "JSON",
+        }
 
     params: dict[str, Any] = {
         "numOfRows": rows,
@@ -460,6 +504,12 @@ def _source_params(source: PublicDataSource, page_no: int, region: dict[str, Any
     return params
 
 
+def _source_max_pages(source: PublicDataSource) -> int:
+    if source.name == "molit_ground_boreholes":
+        return max(1, int(settings.molit_borehole_max_pages))
+    return max(1, int(settings.public_data_max_pages))
+
+
 def _fetch_page(
     source: PublicDataSource,
     api_key: str,
@@ -470,7 +520,8 @@ def _fetch_page(
     if source.name in _WORKING_API_VARIANTS:
         variants.append(_WORKING_API_VARIANTS[source.name])
     for url in _candidate_urls(source.url):
-        for key_name in ("ServiceKey", "serviceKey"):
+        key_names = ("serviceKey", "ServiceKey") if source.name == "molit_ground_boreholes" else ("ServiceKey", "serviceKey")
+        for key_name in key_names:
             variant = (url, key_name)
             if variant not in variants:
                 variants.append(variant)
@@ -498,7 +549,7 @@ def _fetch_source_items(
     region: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
     items: list[dict[str, Any]] = []
-    max_pages = max(1, int(settings.public_data_max_pages))
+    max_pages = _source_max_pages(source)
     rows_per_page = _source_rows(source)
     for page_no in range(1, max_pages + 1):
         payload = _fetch_page(source, api_key, page_no, region)
@@ -627,7 +678,7 @@ def _first_text(item: dict[str, Any], keys: tuple[str, ...], default: str = "") 
 
 def _item_record_id(item: dict[str, Any]) -> str | None:
     parts = [
-        _first_text(item, ("no", "No"), ""),
+        _first_text(item, ("no", "No", "시추공코드"), ""),
         _first_text(item, ("facilNo", "arNo", "evalNo", "accdntNo", "sagoNo", "sogoNo", "mgmPmsrgstPk"), ""),
         _first_text(item, ("chckDignSeq", "facilNm", "evalNm", "accdntNm", "accdntYmd", "tm", "archPmsDay"), ""),
     ]
@@ -656,6 +707,51 @@ def _item_lat_lon(item: dict[str, Any]) -> tuple[float, float] | None:
     if -90.0 <= x <= 90.0 and -180.0 <= y <= 180.0:
         return x, y
     return None
+
+
+def _korea_wgs84(lat: float, lon: float) -> bool:
+    return 32.0 <= lat <= 39.8 and 124.0 <= lon <= 132.5
+
+
+def _projected_xy_to_wgs84(raw_x: float | None, raw_y: float | None) -> tuple[float | None, float | None, str | None]:
+    if raw_x is None or raw_y is None:
+        return None, None, None
+
+    if _korea_wgs84(raw_y, raw_x):
+        return raw_y, raw_x, "EPSG:4326"
+    if _korea_wgs84(raw_x, raw_y):
+        return raw_x, raw_y, "EPSG:4326"
+
+    try:
+        from pyproj import Transformer
+    except ImportError:
+        return None, None, settings.molit_borehole_coord_crs
+
+    candidates = [
+        settings.molit_borehole_coord_crs,
+        "EPSG:5181",
+        "EPSG:5186",
+        "EPSG:5187",
+        "EPSG:5185",
+        "EPSG:5179",
+    ]
+    for crs in dict.fromkeys(candidate for candidate in candidates if candidate):
+        try:
+            transformer = _COORD_TRANSFORMERS.get(crs)
+            if transformer is None:
+                transformer = Transformer.from_crs(crs, "EPSG:4326", always_xy=True)
+                _COORD_TRANSFORMERS[crs] = transformer
+
+            lon, lat = transformer.transform(raw_x, raw_y)
+            if _korea_wgs84(float(lat), float(lon)):
+                return float(lat), float(lon), crs
+
+            lon, lat = transformer.transform(raw_y, raw_x)
+            if _korea_wgs84(float(lat), float(lon)):
+                return float(lat), float(lon), f"{crs}:swapped"
+        except Exception:
+            continue
+    return None, None, settings.molit_borehole_coord_crs
 
 
 def _distance_m(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
@@ -1388,6 +1484,69 @@ def _insert_weather_data(
     return changed
 
 
+def _stable_source_row_number(value: str) -> int:
+    digest = hashlib.sha256(value.encode("utf-8")).hexdigest()
+    return int(digest[:12], 16)
+
+
+def _insert_molit_borehole(conn: sqlite3.Connection, item: dict[str, Any], source_name: str) -> bool:
+    borehole_code = _first_text(item, ("시추공코드", "borehole_code", "boreholeCode", "boreholeNo"), "")
+    raw_x = _optional_float(_first_text(item, ("X좌표", "x", "coordX", "gisX"), ""))
+    raw_y = _optional_float(_first_text(item, ("Y좌표", "y", "coordY", "gisY"), ""))
+    latitude, longitude, coordinate_crs = _projected_xy_to_wgs84(raw_x, raw_y)
+    elevation_m = _optional_float(_first_text(item, ("고도", "elevation", "elevation_m"), ""))
+    total_depth_m = _optional_float(_first_text(item, ("시추심도", "total_depth_m", "boreDepth", "depth"), ""))
+    groundwater_level_m = _optional_float(_first_text(item, ("지하수위", "groundwater_level_m", "waterLevel"), ""))
+    borehole_method = _first_text(item, ("시추방법", "borehole_method", "boringMethod"), "")
+    borehole_type = _first_text(item, ("시추공종류", "borehole_type", "boringType"), "")
+    source_record_id = borehole_code or _item_record_id(item) or _payload_hash(item)
+    source_file = source_name
+    source_row_number = _stable_source_row_number(source_record_id)
+
+    existing = query_one(
+        conn,
+        """
+        SELECT id
+        FROM molit_ground_boreholes
+        WHERE source_name = ? AND source_record_id = ?
+        LIMIT 1
+        """,
+        (source_name, source_record_id),
+    )
+
+    conn.execute(
+        """
+        INSERT OR REPLACE INTO molit_ground_boreholes(
+            id, borehole_code, project_name, address, latitude, longitude,
+            raw_x, raw_y, coordinate_crs, elevation_m, total_depth_m,
+            groundwater_level_m, borehole_method, borehole_type,
+            source_name, source_record_id, source_file, source_row_number, raw_json
+        )
+        VALUES(?, ?, NULL, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            existing["id"] if existing else None,
+            borehole_code or None,
+            latitude,
+            longitude,
+            raw_x,
+            raw_y,
+            coordinate_crs,
+            elevation_m,
+            total_depth_m,
+            groundwater_level_m,
+            borehole_method or None,
+            borehole_type or None,
+            source_name,
+            source_record_id,
+            source_file,
+            source_row_number,
+            _stable_json(item),
+        ),
+    )
+    return not bool(existing)
+
+
 def _match_region(item: dict[str, Any], regions: list[dict[str, Any]]) -> dict[str, Any] | None:
     text = _item_text(item)
     for region in regions:
@@ -1408,6 +1567,8 @@ def _normalize_one_item(
         return _insert_weather_data(conn, item, regions, source.name)
     if source.normalizer == "construction_permit":
         return _insert_construction_from_permit(conn, item, source.name)
+    if source.normalizer == "borehole":
+        return _insert_molit_borehole(conn, item, source.name)
 
     target_region = _resolve_item_region(item, regions)
     if not target_region and source.normalizer == "accident":
@@ -1472,6 +1633,7 @@ def _clear_rebuilt_public_tables(conn: sqlite3.Connection) -> None:
     conn.execute("DELETE FROM sinkhole_history WHERE source_name IS NOT NULL")
     conn.execute("DELETE FROM weather_data WHERE source_name IS NOT NULL")
     conn.execute("DELETE FROM construction_events WHERE source_name IS NOT NULL")
+    conn.execute("DELETE FROM molit_ground_boreholes WHERE source_name = 'molit_ground_boreholes'")
 
 
 def _renormalize_raw_records(conn: sqlite3.Connection, regions: list[dict[str, Any]]) -> int:
@@ -1536,6 +1698,32 @@ def _rebuild_today_analysis(conn: sqlite3.Connection) -> None:
         analyze_road(conn, int(road["road_id"]), analysis_date)
 
 
+def _fresh_source_skip_reason(conn: sqlite3.Connection, source: PublicDataSource) -> str | None:
+    if source.name != "molit_ground_boreholes":
+        return None
+    row = query_one(
+        conn,
+        """
+        SELECT MAX(fetched_at) AS fetched_at
+        FROM raw_source_records
+        WHERE source_name = ?
+        """,
+        (source.name,),
+    )
+    count = conn.execute("SELECT COUNT(*) FROM molit_ground_boreholes").fetchone()[0]
+    fetched_at = row.get("fetched_at") if row else None
+    if not count or not fetched_at:
+        return None
+    try:
+        latest = datetime.fromisoformat(str(fetched_at))
+    except ValueError:
+        return None
+    refresh_after = latest + timedelta(days=max(1, int(settings.molit_borehole_refresh_days)))
+    if datetime.now() < refresh_after:
+        return f"cached_until {refresh_after.isoformat(timespec='seconds')}"
+    return None
+
+
 def _collect_source(
     conn: sqlite3.Connection,
     source: PublicDataSource,
@@ -1547,6 +1735,19 @@ def _collect_source(
     saved_count = 0
     normalized_count = 0
     errors: list[str] = []
+
+    skip_reason = _fresh_source_skip_reason(conn, source)
+    if skip_reason:
+        return {
+            "source": source.name,
+            "label": source.label,
+            "success": True,
+            "fetched_count": 0,
+            "saved_count": 0,
+            "normalized_count": 0,
+            "skipped": skip_reason,
+            "errors": [],
+        }
 
     targets = _source_targets(source, regions)
     for region in targets:

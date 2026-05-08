@@ -89,6 +89,9 @@ BOREHOLE_ALIASES = {
     **COMMON_ALIASES,
     "elevation_m": ("표고", "지반고", "해발고도", "elevation", "groundlevel"),
     "total_depth_m": ("굴진심도", "시추심도", "총심도", "depth", "totaldepth", "boredepth"),
+    "groundwater_level_m": ("지하수위", "groundwaterlevel", "waterlevel"),
+    "borehole_method": ("시추방법", "boringmethod", "boreholemethod"),
+    "borehole_type": ("시추공종류", "시추공구분", "boreholetype", "boringtype"),
 }
 
 
@@ -305,9 +308,16 @@ def import_boreholes(
                 _clean_text(_value(row, column_map, "address")),
                 lat,
                 lon,
+                None,
+                None,
+                "WGS84" if lat is not None and lon is not None else None,
                 _float_value(_value(row, column_map, "elevation_m")),
                 _float_value(_value(row, column_map, "total_depth_m")),
+                _float_value(_value(row, column_map, "groundwater_level_m")),
+                _clean_text(_value(row, column_map, "borehole_method")),
+                _clean_text(_value(row, column_map, "borehole_type")),
                 SOURCE_BOREHOLES,
+                _clean_text(_value(row, column_map, "borehole_code")),
                 source_file,
                 row_number,
                 json.dumps(row, ensure_ascii=False) if keep_raw else None,
@@ -333,10 +343,11 @@ def _insert_boreholes(conn: sqlite3.Connection, batch: list[tuple[Any, ...]]) ->
         """
         INSERT OR REPLACE INTO molit_ground_boreholes(
             borehole_code, project_name, address, latitude, longitude,
-            elevation_m, total_depth_m, source_name, source_file,
-            source_row_number, raw_json
+            raw_x, raw_y, coordinate_crs, elevation_m, total_depth_m,
+            groundwater_level_m, borehole_method, borehole_type,
+            source_name, source_record_id, source_file, source_row_number, raw_json
         )
-        VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         batch,
     )

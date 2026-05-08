@@ -270,9 +270,16 @@ CREATE TABLE IF NOT EXISTS molit_ground_boreholes (
     address TEXT,
     latitude REAL,
     longitude REAL,
+    raw_x REAL,
+    raw_y REAL,
+    coordinate_crs TEXT,
     elevation_m REAL,
     total_depth_m REAL,
+    groundwater_level_m REAL,
+    borehole_method TEXT,
+    borehole_type TEXT,
     source_name TEXT,
+    source_record_id TEXT,
     source_file TEXT NOT NULL,
     source_row_number INTEGER NOT NULL,
     raw_json TEXT,
@@ -343,5 +350,6 @@ CREATE INDEX IF NOT EXISTS idx_raw_source_records_source ON raw_source_records(s
 CREATE INDEX IF NOT EXISTS idx_public_data_collection_runs_started ON public_data_collection_runs(started_at);
 CREATE INDEX IF NOT EXISTS idx_molit_ground_boreholes_code ON molit_ground_boreholes(borehole_code);
 CREATE INDEX IF NOT EXISTS idx_molit_ground_boreholes_coord ON molit_ground_boreholes(latitude, longitude);
+CREATE INDEX IF NOT EXISTS idx_molit_ground_boreholes_source_record ON molit_ground_boreholes(source_name, source_record_id);
 CREATE INDEX IF NOT EXISTS idx_molit_ground_layers_code ON molit_ground_layers(borehole_code);
 CREATE INDEX IF NOT EXISTS idx_molit_ground_layers_coord ON molit_ground_layers(latitude, longitude);

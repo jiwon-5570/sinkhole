@@ -81,6 +81,15 @@ class Settings:
     public_data_accident_lookback_days: int = _int_env("SINKHOLE_PUBLIC_DATA_ACCIDENT_LOOKBACK_DAYS", 3650)
     public_data_weather_lookback_days: int = _int_env("SINKHOLE_PUBLIC_DATA_WEATHER_LOOKBACK_DAYS", 14)
     public_data_construction_lookback_days: int = _int_env("SINKHOLE_PUBLIC_DATA_CONSTRUCTION_LOOKBACK_DAYS", 1095)
+    molit_borehole_api_enabled: bool = _bool_env("SINKHOLE_MOLIT_BOREHOLE_API_ENABLED", True)
+    molit_borehole_api_url: str = os.getenv(
+        "SINKHOLE_MOLIT_BOREHOLE_API_URL",
+        "https://api.odcloud.kr/api/15069365/v1/uddi:e3857d80-b97e-4693-84d5-f2b4f37959f0",
+    )
+    molit_borehole_rows_per_page: int = _int_env("SINKHOLE_MOLIT_BOREHOLE_ROWS_PER_PAGE", 1000)
+    molit_borehole_max_pages: int = _int_env("SINKHOLE_MOLIT_BOREHOLE_MAX_PAGES", 10)
+    molit_borehole_refresh_days: int = _int_env("SINKHOLE_MOLIT_BOREHOLE_REFRESH_DAYS", 30)
+    molit_borehole_coord_crs: str = os.getenv("SINKHOLE_MOLIT_BOREHOLE_COORD_CRS", "EPSG:5181")
     kalis_public_facility_safety_url: str = os.getenv(
         "SINKHOLE_KALIS_PUBLIC_FACILITY_SAFETY_URL",
         "http://apis.data.go.kr/B552016/PublicFacilSafetyMngService/getPublicFacilSafetyMngList",
