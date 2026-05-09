@@ -69,6 +69,7 @@ class Settings:
 
     # 공공데이터포털 API 키 추가
     public_data_api_key: str | None = os.getenv("PUBLIC_DATA_API_KEY")
+    safemap_api_key: str | None = os.getenv("SAFEMAP_API_KEY") or os.getenv("PUBLIC_DATA_API_KEY")
     external_request_timeout_seconds: float = _float_env("SINKHOLE_EXTERNAL_TIMEOUT_SECONDS", 15.0)
     gemini_timeout_seconds: float = _float_env("SINKHOLE_GEMINI_TIMEOUT_SECONDS", 30.0)
     public_data_timeout_seconds: float = _float_env("SINKHOLE_PUBLIC_DATA_TIMEOUT_SECONDS", 20.0)
@@ -91,6 +92,13 @@ class Settings:
     molit_borehole_refresh_days: int = _int_env("SINKHOLE_MOLIT_BOREHOLE_REFRESH_DAYS", 30)
     molit_borehole_min_cached_rows: int = _int_env("SINKHOLE_MOLIT_BOREHOLE_MIN_CACHED_ROWS", 300000)
     molit_borehole_coord_crs: str = os.getenv("SINKHOLE_MOLIT_BOREHOLE_COORD_CRS", "EPSG:5186")
+    safemap_old_building_enabled: bool = _bool_env("SINKHOLE_SAFEMAP_OLD_BUILDING_ENABLED", True)
+    safemap_old_building_api_url: str = os.getenv(
+        "SINKHOLE_SAFEMAP_OLD_BUILDING_API_URL",
+        "http://safemap.go.kr/openapi2/IF_0002",
+    )
+    safemap_old_building_rows_per_page: int = _int_env("SINKHOLE_SAFEMAP_OLD_BUILDING_ROWS_PER_PAGE", 100)
+    safemap_old_building_max_pages: int = _int_env("SINKHOLE_SAFEMAP_OLD_BUILDING_MAX_PAGES", 3)
     kalis_public_facility_safety_url: str = os.getenv(
         "SINKHOLE_KALIS_PUBLIC_FACILITY_SAFETY_URL",
         "http://apis.data.go.kr/B552016/PublicFacilSafetyMngService/getPublicFacilSafetyMngList",

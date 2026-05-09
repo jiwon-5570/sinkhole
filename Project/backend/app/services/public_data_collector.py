@@ -82,6 +82,20 @@ APPROVED_SOURCES = (
         normalizer="weather",
         max_rows_per_page=999,
     ),
+    *(
+        (
+            PublicDataSource(
+                name="mois_safemap_old_buildings",
+                label="MOIS SafeMap old building information",
+                url=settings.safemap_old_building_api_url,
+                scope="global",
+                normalizer="old_building",
+                max_rows_per_page=1000,
+            ),
+        )
+        if settings.safemap_old_building_enabled
+        else ()
+    ),
     PublicDataSource(
         name="building_permit_construction",
         label="MOLIT building permit construction",
@@ -109,7 +123,7 @@ APPROVED_SOURCES = (
 _STATE: dict[str, Any] = {
     "enabled": settings.public_data_auto_collect,
     "running": False,
-    "key_loaded": bool(settings.public_data_api_key),
+    "key_loaded": bool(settings.public_data_api_key or settings.safemap_api_key),
     "last_started_at": None,
     "last_finished_at": None,
     "last_success": None,
@@ -179,13 +193,20 @@ def _api_key_for_request(api_key: str) -> str:
     return unquote(api_key.strip())
 
 
+def _source_api_key(source: PublicDataSource, default_api_key: str) -> str:
+    if source.name == "mois_safemap_old_buildings":
+        return settings.safemap_api_key or default_api_key
+    return default_api_key
+
+
 def _redact_message(value: Any) -> str:
     text = str(value)
-    api_key = settings.public_data_api_key
-    if api_key:
-        for secret in {api_key, _api_key_for_request(api_key)}:
-            if secret:
-                text = text.replace(secret, "[PUBLIC_DATA_API_KEY]")
+    api_keys = {settings.public_data_api_key, settings.safemap_api_key}
+    for api_key in api_keys:
+        if api_key:
+            for secret in {api_key, _api_key_for_request(api_key)}:
+                if secret:
+                    text = text.replace(secret, "[PUBLIC_DATA_API_KEY]")
     text = re.sub(r"([?&]ServiceKey=)[^&\s)]+", r"\1[REDACTED]", text)
     text = re.sub(r"([?&]serviceKey=)[^&\s)]+", r"\1[REDACTED]", text)
     return text
@@ -265,6 +286,7 @@ def _ensure_normalized_table_columns(conn: sqlite3.Connection) -> None:
 
     _ensure_column(conn, "facility_inspection", "facility_name", "TEXT")
     _ensure_column(conn, "facility_status", "facility_name", "TEXT")
+    _ensure_column(conn, "facility_status", "aging_ratio", "REAL")
     _ensure_column(conn, "underground_safety", "project_name", "TEXT")
     _ensure_column(conn, "underground_safety", "max_dig_depth", "REAL")
     _ensure_column(conn, "underground_safety", "risk_score", "REAL")
@@ -425,6 +447,8 @@ def _csv_values(value: str | None) -> list[str]:
 def _source_rows(source: PublicDataSource) -> int:
     if source.name == "molit_ground_boreholes":
         return min(max(1, int(settings.molit_borehole_rows_per_page)), source.max_rows_per_page)
+    if source.name == "mois_safemap_old_buildings":
+        return min(max(1, int(settings.safemap_old_building_rows_per_page)), source.max_rows_per_page)
     if source.name == "ground_subsidence_accident":
         return source.max_rows_per_page
     if source.name == "kma_asos_hourly_rainfall":
@@ -473,6 +497,12 @@ def _source_params(source: PublicDataSource, page_no: int, region: dict[str, Any
             "perPage": _source_rows(source),
             "returnType": "JSON",
         }
+    if source.name == "mois_safemap_old_buildings":
+        return {
+            "numOfRows": rows,
+            "pageNo": page_no,
+            "returnType": "JSON",
+        }
 
     params: dict[str, Any] = {
         "numOfRows": rows,
@@ -507,6 +537,8 @@ def _source_params(source: PublicDataSource, page_no: int, region: dict[str, Any
 def _source_max_pages(source: PublicDataSource) -> int:
     if source.name == "molit_ground_boreholes":
         return max(1, int(settings.molit_borehole_max_pages))
+    if source.name == "mois_safemap_old_buildings":
+        return max(1, int(settings.safemap_old_building_max_pages))
     return max(1, int(settings.public_data_max_pages))
 
 
@@ -520,7 +552,11 @@ def _fetch_page(
     if source.name in _WORKING_API_VARIANTS:
         variants.append(_WORKING_API_VARIANTS[source.name])
     for url in _candidate_urls(source.url):
-        key_names = ("serviceKey", "ServiceKey") if source.name == "molit_ground_boreholes" else ("ServiceKey", "serviceKey")
+        key_names = (
+            ("serviceKey", "ServiceKey")
+            if source.name in {"molit_ground_boreholes", "mois_safemap_old_buildings"}
+            else ("ServiceKey", "serviceKey")
+        )
         for key_name in key_names:
             variant = (url, key_name)
             if variant not in variants:
@@ -529,7 +565,7 @@ def _fetch_page(
     last_error: Exception | None = None
     for url, key_name in variants:
         params = _source_params(source, page_no, region)
-        params[key_name] = _api_key_for_request(api_key)
+        params[key_name] = _api_key_for_request(_source_api_key(source, api_key))
         try:
             response = requests.get(url, params=params, timeout=settings.public_data_timeout_seconds)
             response.raise_for_status()
@@ -921,6 +957,88 @@ def _facility_risk_score(item: dict[str, Any]) -> float:
     return round(max(0.0, min(score, 100.0)), 1)
 
 
+def _first_number(item: dict[str, Any], keys: tuple[str, ...]) -> float | None:
+    for key in keys:
+        value = _ci_get(item, key)
+        number = _optional_float(value)
+        if number is not None:
+            return number
+    return None
+
+
+def _old_building_numbers(item: dict[str, Any]) -> tuple[int, int, float]:
+    total = _first_number(
+        item,
+        (
+            "totalBuildingCount",
+            "totBuildingCount",
+            "totalBldgCount",
+            "totBldgCount",
+            "bldgTotalCount",
+            "bldTotCnt",
+            "totCnt",
+            "totalCnt",
+            "allBldgCnt",
+            "buildings",
+            "T001",
+            "전체건물수",
+            "총건물수",
+        ),
+    )
+    aging = _first_number(
+        item,
+        (
+            "oldBuildingCount",
+            "agedBuildingCount",
+            "oldBldgCount",
+            "oldBldgCnt",
+            "bldg30Count",
+            "bld30Cnt",
+            "over30BuildingCount",
+            "over30BldgCnt",
+            "agingCnt",
+            "oldCnt",
+            "T002",
+            "노후건물수",
+            "30년이상건물수",
+        ),
+    )
+    ratio = _first_number(
+        item,
+        (
+            "oldBuildingRatio",
+            "agedBuildingRatio",
+            "oldBldgRatio",
+            "oldBldgRate",
+            "bldg30Ratio",
+            "over30Ratio",
+            "agingRatio",
+            "oldRate",
+            "ratio",
+            "rate",
+            "T003",
+            "노후건물비율",
+            "30년이상건물비율",
+        ),
+    )
+
+    total_count = int(total or 0)
+    aging_count = int(aging or 0)
+    if total_count > 0 and aging_count > 0:
+        ratio_value = aging_count / total_count
+    elif ratio is not None:
+        ratio_value = float(ratio)
+        if ratio_value > 1.0:
+            ratio_value /= 100.0
+        if total_count > 0:
+            aging_count = int(round(total_count * ratio_value))
+    else:
+        ratio_value = 0.0
+
+    ratio_value = max(0.0, min(ratio_value, 1.0))
+    return max(0, total_count), max(0, aging_count), round(ratio_value, 4)
+
+
 def _diagnosis_result(score: float) -> str:
     if score >= 75:
         return "danger"
@@ -1061,6 +1179,7 @@ def _insert_facility_status(conn: sqlite3.Connection, region_id: int, item: dict
     inspection_date = _facility_date(item)
     inspection_rate = 100.0 if inspection_date else 0.0
     aging_count = 1 if age >= 30 else 0
+    aging_ratio = float(aging_count)
     existing = None
     if source_record_id:
         existing = query_one(
@@ -1087,25 +1206,86 @@ def _insert_facility_status(conn: sqlite3.Connection, region_id: int, item: dict
               AND total_count = 1
               AND aging_count = ?
               AND ABS(COALESCE(inspection_rate, 0) - ?) < 0.001
+              AND ABS(COALESCE(aging_ratio, 0) - ?) < 0.001
             LIMIT 1
             """,
-            (region_id, facility_type, facility_name, aging_count, inspection_rate),
+            (region_id, facility_type, facility_name, aging_count, inspection_rate, aging_ratio),
         )
     if existing:
         return False
     conn.execute(
         """
         INSERT INTO facility_status(
-            region_id, facility_type, total_count, aging_count, inspection_rate,
+            region_id, facility_type, total_count, aging_count, aging_ratio, inspection_rate,
             source_name, source_record_id, facility_name, address, latitude, longitude
         )
-        VALUES(?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES(?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             region_id,
             facility_type,
             aging_count,
+            aging_ratio,
             inspection_rate,
+            source_name,
+            source_record_id,
+            facility_name,
+            address,
+            latitude,
+            longitude,
+        ),
+    )
+    return True
+
+
+def _insert_old_building_status(conn: sqlite3.Connection, region_id: int, item: dict[str, Any], source_name: str) -> bool:
+    total_count, aging_count, aging_ratio = _old_building_numbers(item)
+    if total_count <= 0 and aging_count <= 0 and aging_ratio <= 0:
+        return False
+
+    if total_count <= 0 and aging_count > 0:
+        total_count = aging_count
+        aging_ratio = 1.0
+    if aging_count <= 0 and total_count > 0 and aging_ratio > 0:
+        aging_count = int(round(total_count * aging_ratio))
+
+    facility_type = "old_building"
+    facility_name = _item_name(item) or "SafeMap old building statistics"
+    address = _item_address(item)
+    coords = _item_lat_lon(item)
+    latitude = coords[0] if coords else None
+    longitude = coords[1] if coords else None
+    source_record_id = _item_record_id(item) or f"{region_id}:{_payload_hash(item)}"
+
+    existing = query_one(
+        conn,
+        """
+        SELECT id
+        FROM facility_status
+        WHERE region_id = ?
+          AND source_name = ?
+          AND source_record_id = ?
+        LIMIT 1
+        """,
+        (region_id, source_name, source_record_id),
+    )
+    if existing:
+        return False
+
+    conn.execute(
+        """
+        INSERT INTO facility_status(
+            region_id, facility_type, total_count, aging_count, aging_ratio, inspection_rate,
+            source_name, source_record_id, facility_name, address, latitude, longitude
+        )
+        VALUES(?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            region_id,
+            facility_type,
+            int(total_count),
+            int(aging_count),
+            float(aging_ratio),
             source_name,
             source_record_id,
             facility_name,
@@ -1557,6 +1737,19 @@ def _match_region(item: dict[str, Any], regions: list[dict[str, Any]]) -> dict[s
     return None
 
 
+def _matching_regions_by_text(item: dict[str, Any], regions: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    text = _item_text(item)
+    matched: list[dict[str, Any]] = []
+    for region in regions:
+        sigungu = str(region.get("sigungu") or "").strip()
+        region_name = str(region.get("region_name") or "").strip()
+        if sigungu and sigungu in text:
+            matched.append(region)
+        elif region_name and region_name in text:
+            matched.append(region)
+    return matched
+
+
 def _normalize_one_item(
     conn: sqlite3.Connection,
     source: PublicDataSource,
@@ -1569,6 +1762,15 @@ def _normalize_one_item(
         return _insert_construction_from_permit(conn, item, source.name)
     if source.normalizer == "borehole":
         return _insert_molit_borehole(conn, item, source.name)
+    if source.normalizer == "old_building":
+        changed = False
+        matched_regions = _matching_regions_by_text(item, regions)
+        if not matched_regions:
+            nearest_region = _resolve_item_region(item, regions)
+            matched_regions = [nearest_region] if nearest_region else []
+        for region in matched_regions:
+            changed = _insert_old_building_status(conn, int(region["region_id"]), item, source.name) or changed
+        return changed
 
     target_region = _resolve_item_region(item, regions)
     if not target_region and source.normalizer == "accident":
@@ -1803,7 +2005,7 @@ def collect_public_data_once() -> dict[str, Any]:
     _STATE.update(
         {
             "running": True,
-            "key_loaded": bool(settings.public_data_api_key),
+            "key_loaded": bool(settings.public_data_api_key or settings.safemap_api_key),
             "last_started_at": started_at,
             "last_error": None,
         }
@@ -1826,8 +2028,9 @@ def collect_public_data_once() -> dict[str, Any]:
         ).lastrowid
         conn.commit()
 
-        if not settings.public_data_api_key:
-            raise RuntimeError("PUBLIC_DATA_API_KEY is not set")
+        default_api_key = settings.public_data_api_key or settings.safemap_api_key
+        if not default_api_key:
+            raise RuntimeError("PUBLIC_DATA_API_KEY or SAFEMAP_API_KEY is not set")
 
         regions = query_all(
             conn,
@@ -1839,7 +2042,9 @@ def collect_public_data_once() -> dict[str, Any]:
         )
 
         for source in APPROVED_SOURCES:
-            result = _collect_source(conn, source, settings.public_data_api_key, regions, started_at)
+            if source.name != "mois_safemap_old_buildings" and not settings.public_data_api_key:
+                continue
+            result = _collect_source(conn, source, default_api_key, regions, started_at)
             source_results.append(result)
             if any(_is_network_wide_error(error) for error in result["errors"]):
                 break

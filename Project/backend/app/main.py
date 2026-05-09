@@ -33,6 +33,7 @@ from app.routes.simulation import router as simulation_router
 from app.security import BasicAuthMiddleware
 from app.services.features import today_str
 from app.services.public_data_collector import public_data_scheduler
+from app.services.real_data_targets import ensure_public_ground_regions
 
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
@@ -45,6 +46,8 @@ def initialize_app_data() -> None:
             apply_schema(conn, settings.schema_path)
         if settings.seed_demo_data:
             raise RuntimeError("SINKHOLE_SEED_DEMO is disabled for real-data operation.")
+
+        ensure_public_ground_regions(conn)
 
         if settings.analyze_on_start:
             analysis_date = today_str()

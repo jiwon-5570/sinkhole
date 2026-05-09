@@ -107,6 +107,7 @@ CREATE TABLE IF NOT EXISTS facility_status (
     facility_type TEXT,
     total_count INTEGER,
     aging_count INTEGER,
+    aging_ratio REAL,
     inspection_rate REAL,
     source_name TEXT,
     source_record_id TEXT,

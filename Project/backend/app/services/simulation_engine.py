@@ -8,12 +8,12 @@ from app.services.risk_scoring import clamp, risk_level
 
 
 FACTOR_LABELS = {
-    "past_sinkhole": "과거 침하 이력",
+    "past_sinkhole": "과거 지반침하 이력",
     "gpr": "GPR 이상 신호",
-    "facility": "시설물 노후도",
+    "facility": "시설물/노후건물",
     "rainfall": "강우 영향",
     "groundwater": "지하수위 변화",
-    "environment": "지반/환경 취약도",
+    "environment": "지층/환경 취약도",
     "construction": "굴착/공사 영향",
 }
 
@@ -46,6 +46,23 @@ PRESETS: dict[str, dict[str, float | int | bool]] = {
         "facility_aging_delta": 20.0,
         "gpr_anomaly_count": 2,
     },
+    "old_building": {
+        "forecast_horizon_hours": 72,
+        "facility_aging_delta": 30.0,
+        "environment_delta_score": 2.0,
+    },
+    "compound": {
+        "forecast_horizon_hours": 72,
+        "extra_rainfall_mm": 120.0,
+        "groundwater_delta_m": 0.8,
+        "is_major_construction": True,
+        "excavation_depth_m": 10.0,
+        "construction_distance_m": 120.0,
+        "gpr_anomaly_count": 2,
+        "facility_aging_delta": 20.0,
+        "past_sinkhole_delta_count": 1,
+        "environment_delta_score": 2.5,
+    },
 }
 
 
@@ -60,6 +77,8 @@ class Scenario:
     construction_distance_m: float
     gpr_anomaly_count: int
     facility_aging_delta: float
+    past_sinkhole_delta_count: int
+    environment_delta_score: float
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -72,6 +91,8 @@ class Scenario:
             "construction_distance_m": round(self.construction_distance_m, 1),
             "gpr_anomaly_count": self.gpr_anomaly_count,
             "facility_aging_delta": round(self.facility_aging_delta, 1),
+            "past_sinkhole_delta_count": self.past_sinkhole_delta_count,
+            "environment_delta_score": round(self.environment_delta_score, 1),
         }
 
 
@@ -86,14 +107,28 @@ def normalize_scenario(req: WhatIfRequest) -> Scenario:
     preset = PRESETS.get(preset_key, {})
     return Scenario(
         preset=preset_key if preset_key in PRESETS else "custom",
-        forecast_horizon_hours=max(int(req.forecast_horizon_hours), int(preset.get("forecast_horizon_hours", 0) or 0) or 1),
+        forecast_horizon_hours=max(
+            int(req.forecast_horizon_hours),
+            int(preset.get("forecast_horizon_hours", 0) or 0) or 1,
+        ),
         extra_rainfall_mm=_max_number(req.extra_rainfall_mm, preset.get("extra_rainfall_mm")),
-        groundwater_delta_m=max(float(req.groundwater_delta_m), float(preset.get("groundwater_delta_m", req.groundwater_delta_m))),
+        groundwater_delta_m=max(
+            float(req.groundwater_delta_m),
+            float(preset.get("groundwater_delta_m", req.groundwater_delta_m)),
+        ),
         is_major_construction=bool(req.is_major_construction or preset.get("is_major_construction", False)),
         excavation_depth_m=_max_number(req.excavation_depth_m, preset.get("excavation_depth_m")),
-        construction_distance_m=min(float(req.construction_distance_m), float(preset.get("construction_distance_m", req.construction_distance_m))),
+        construction_distance_m=min(
+            float(req.construction_distance_m),
+            float(preset.get("construction_distance_m", req.construction_distance_m)),
+        ),
         gpr_anomaly_count=max(int(req.gpr_anomaly_count), int(preset.get("gpr_anomaly_count", req.gpr_anomaly_count))),
         facility_aging_delta=_max_number(req.facility_aging_delta, preset.get("facility_aging_delta")),
+        past_sinkhole_delta_count=max(
+            int(req.past_sinkhole_delta_count),
+            int(preset.get("past_sinkhole_delta_count", req.past_sinkhole_delta_count)),
+        ),
+        environment_delta_score=_max_number(req.environment_delta_score, preset.get("environment_delta_score")),
     )
 
 
@@ -127,6 +162,8 @@ def simulated_breakdown(row: dict, scenario: Scenario) -> dict[str, float]:
     groundwater_add = clamp(abs(scenario.groundwater_delta_m) * 3.2 * horizon, 0, 10)
     gpr_add = clamp(scenario.gpr_anomaly_count * 4.0, 0, 14)
     facility_add = clamp(scenario.facility_aging_delta * 0.18, 0, 8)
+    past_sinkhole_add = clamp(scenario.past_sinkhole_delta_count * 8.0, 0, 24)
+    environment_add = clamp(scenario.environment_delta_score, 0, 10)
 
     distance_factor = clamp((500.0 - scenario.construction_distance_m) / 500.0, 0, 1)
     depth_factor = clamp(scenario.excavation_depth_m / 20.0, 0, 1.6)
@@ -135,12 +172,12 @@ def simulated_breakdown(row: dict, scenario: Scenario) -> dict[str, float]:
         construction_add = clamp(3.0 + (distance_factor * 5.0) + (depth_factor * 3.0), 0, 12)
 
     return {
-        "past_sinkhole": base["past_sinkhole"],
+        "past_sinkhole": clamp(base["past_sinkhole"] + past_sinkhole_add, 0, 34),
         "gpr": clamp(base["gpr"] + gpr_add, 0, 34),
         "facility": clamp(base["facility"] + facility_add, 0, 18),
         "rainfall": clamp(base["rainfall"] + rainfall_add, 0, 20),
         "groundwater": clamp(base["groundwater"] + groundwater_add, 0, 14),
-        "environment": base["environment"],
+        "environment": clamp(base["environment"] + environment_add, 0, 12),
         "construction": clamp(base["construction"] + construction_add, 0, 12),
     }
 
@@ -168,17 +205,23 @@ def _recommendations(score: float, diff: float, drivers: list[dict[str, Any]], s
     if score >= 80 or diff >= 15:
         items.append("24시간 이내 현장 점검과 통제 필요 여부를 검토하세요.")
     elif score >= 60 or diff >= 8:
-        items.append("우선 점검 대상으로 지정하고 센서 추이를 집중 모니터링하세요.")
+        items.append("우선 점검 대상으로 지정하고 일별 추이를 집중 모니터링하세요.")
     else:
         items.append("정기 모니터링을 유지하되 시나리오 변화가 커지면 재실행하세요.")
     if "rainfall" in driver_keys:
         items.append("배수 불량 구간, 맨홀 주변, 저지대 침수 가능성을 먼저 확인하세요.")
     if "groundwater" in driver_keys:
-        items.append("지하수위 급변 센서와 주변 관정 자료를 교차 확인하세요.")
+        items.append("지하수위 급변 이력과 주변 관측 자료를 교차 확인하세요.")
     if "construction" in driver_keys:
         items.append("굴착 깊이, 흙막이 상태, 공사장 배수 계획을 현장 확인하세요.")
     if "gpr" in driver_keys:
-        items.append("GPR 이상 구간은 공동 재탐사 또는 내시경 조사를 검토하세요.")
+        items.append("GPR 이상 구간은 공동 탐사 또는 내시경 조사를 검토하세요.")
+    if "facility" in driver_keys:
+        items.append("노후 건물과 관로 밀집 구간의 누수, 균열, 배수 상태를 점검하세요.")
+    if "past_sinkhole" in driver_keys:
+        items.append("반복 침하 이력이 반영된 구간은 보수 이력과 지하시설물 도면을 함께 확인하세요.")
+    if "environment" in driver_keys:
+        items.append("취약 지층 또는 매립층이 의심되는 구간은 시추/GPR 재검증 우선순위를 높이세요.")
     if scenario.forecast_horizon_hours >= 72:
         items.append("예측 기간이 길어질수록 불확실성이 커지므로 매일 재계산하세요.")
     return items[:5]
@@ -224,7 +267,7 @@ def simulate_region(row: dict, scenario: Scenario) -> dict[str, Any]:
         "action_level": "긴급" if simulated_score >= 80 or diff >= 15 else "주의" if simulated_score >= 60 or diff >= 8 else "관찰",
         "breakdown": {key: round(value, 1) for key, value in simulated.items()},
         "breakdown_delta": deltas,
-        "drivers": drivers[:4],
+        "drivers": drivers[:5],
         "recommendations": _recommendations(simulated_score, diff, drivers, scenario),
         "scenario": scenario.as_dict(),
     }

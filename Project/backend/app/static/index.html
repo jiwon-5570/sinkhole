@@ -7,7 +7,7 @@
   <meta http-equiv="Pragma" content="no-cache">
   <meta http-equiv="Expires" content="0">
   <title>SinkHole 대시보드</title>
-  <link rel="stylesheet" href="/static/styles.css?v=20260508-live-public-api" onerror="this.onerror=null;this.href='styles.css?v=20260508-live-public-api';">
+  <link rel="stylesheet" href="/static/styles.css?v=20260509-scenario-controls" onerror="this.onerror=null;this.href='styles.css?v=20260509-scenario-controls';">
 </head>
 <body>
   <div class="app-shell">
@@ -371,6 +371,8 @@
           <option value="excavation">대형 굴착공사</option>
           <option value="groundwater">지하수 급변</option>
           <option value="pipe_damage">관로 파손 의심</option>
+          <option value="old_building">노후건물 영향</option>
+          <option value="compound">복합 악화 조건</option>
         </select>
       </label>
       <label class="field">
@@ -407,10 +409,22 @@
           <span>시설물 노후 보정 <b id="whatIfFacilityValue">0점</b></span>
           <input id="whatIfFacility" type="range" min="0" max="50" value="0" step="5">
         </label>
+        <label class="field">
+          <span>과거 침하 추가 <b id="whatIfPastSinkholeValue">0건</b></span>
+          <input id="whatIfPastSinkhole" type="range" min="0" max="10" value="0" step="1">
+        </label>
+        <label class="field">
+          <span>지층/환경 취약도 <b id="whatIfEnvironmentValue">0.0점</b></span>
+          <input id="whatIfEnvironment" type="range" min="0" max="10" value="0" step="0.5">
+        </label>
       </div>
       <label class="check-field">
         <input id="whatIfConstruction" type="checkbox">
         <span>대규모 공사 영향 반영</span>
+      </label>
+      <label class="check-field">
+        <input id="whatIfTargetOnly" type="checkbox">
+        <span>현재 선택 지역에만 적용</span>
       </label>
       <p id="whatIfSummary" class="status-text">추가 강우 0mm / 대규모 공사 없음</p>
       <button id="simulateRiskButton" class="primary" type="button">시뮬레이션 실행</button>
@@ -523,6 +537,6 @@
     </div>
   </dialog>
 
-  <script src="/static/app.js?v=20260508-live-public-api" onerror="this.onerror=null;this.src='app.js?v=20260508-live-public-api';"></script>
+  <script src="/static/app.js?v=20260509-scenario-controls" onerror="this.onerror=null;this.src='app.js?v=20260509-scenario-controls';"></script>
 </body>
 </html>

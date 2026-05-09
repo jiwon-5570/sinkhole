@@ -37,6 +37,8 @@ class WhatIfRequest(BaseModel):
     construction_distance_m: float = Field(default=500.0, ge=0.0, le=5000.0)
     gpr_anomaly_count: int = Field(default=0, ge=0, le=30)
     facility_aging_delta: float = Field(default=0.0, ge=0.0, le=50.0)
+    past_sinkhole_delta_count: int = Field(default=0, ge=0, le=10)
+    environment_delta_score: float = Field(default=0.0, ge=0.0, le=10.0)
     target_region_id: int | None = Field(default=None, ge=1)
 
 

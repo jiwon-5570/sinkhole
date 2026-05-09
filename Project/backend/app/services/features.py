@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import date, datetime
+from math import cos, radians
 import sqlite3
 
 from app.db.core import query_one
@@ -59,6 +60,99 @@ def format_client_clock_label(
     return f"{date_part} {time_part}"
 
 
+def _molit_groundwater_score_near(
+    conn: sqlite3.Connection,
+    latitude: float | None,
+    longitude: float | None,
+    *,
+    radius_m: float = 1500.0,
+) -> float:
+    if latitude is None or longitude is None:
+        return 0.0
+
+    lat = float(latitude)
+    lon = float(longitude)
+    lat_delta = radius_m / 111320.0
+    lon_delta = radius_m / max(111320.0 * cos(radians(lat)), 1.0)
+    row = query_one(
+        conn,
+        """
+        SELECT
+            COUNT(*) AS count,
+            AVG(ABS(groundwater_level_m)) AS avg_depth_m,
+            SUM(CASE WHEN ABS(groundwater_level_m) <= 2 THEN 1 ELSE 0 END) AS shallow_count
+        FROM molit_ground_boreholes
+        WHERE latitude BETWEEN ? AND ?
+          AND longitude BETWEEN ? AND ?
+          AND groundwater_level_m IS NOT NULL
+          AND ABS(groundwater_level_m) > 0.01
+          AND ABS(groundwater_level_m) < 100
+        """,
+        (lat - lat_delta, lat + lat_delta, lon - lon_delta, lon + lon_delta),
+    )
+    count = int((row or {}).get("count") or 0)
+    if count <= 0:
+        return 0.0
+
+    avg_depth = float((row or {}).get("avg_depth_m") or 0.0)
+    shallow_count = int((row or {}).get("shallow_count") or 0)
+    shallow_ratio = shallow_count / count if count else 0.0
+    depth_component = max(0.0, 8.0 - min(avg_depth, 8.0))
+    density_component = min(1.0, count / 30.0)
+    shallow_component = shallow_ratio * 2.0
+    return round(min(8.0, depth_component + density_component + shallow_component), 2)
+
+
+def _molit_groundwater_score_for_region(conn: sqlite3.Connection, region_id: int) -> float:
+    row = query_one(conn, "SELECT latitude, longitude FROM regions WHERE region_id = ?", (region_id,))
+    if not row:
+        return 0.0
+    return _molit_groundwater_score_near(conn, row.get("latitude"), row.get("longitude"))
+
+
+def _molit_groundwater_score_for_road(conn: sqlite3.Connection, road_id: int) -> float:
+    row = query_one(conn, "SELECT center_lat, center_lon FROM road_segments WHERE road_id = ?", (road_id,))
+    if not row:
+        return 0.0
+    return _molit_groundwater_score_near(conn, row.get("center_lat"), row.get("center_lon"))
+
+
+def _facility_status_aging_score(conn: sqlite3.Connection, region_id: int) -> float:
+    status_columns = {str(row[1]) for row in conn.execute("PRAGMA table_info(facility_status)")}
+    ratio_expr = "COALESCE(MAX(aging_ratio), 0)" if "aging_ratio" in status_columns else "0"
+    row = query_one(
+        conn,
+        f"""
+        SELECT
+            COALESCE(SUM(total_count), 0) AS total_count,
+            COALESCE(SUM(aging_count), 0) AS aging_count,
+            {ratio_expr} AS max_aging_ratio
+        FROM facility_status
+        WHERE region_id = ?
+        """,
+        (region_id,),
+    )
+    if not row:
+        return 0.0
+
+    total_count = float(row.get("total_count") or 0.0)
+    aging_count = float(row.get("aging_count") or 0.0)
+    if total_count > 0:
+        return round(min(100.0, max(0.0, aging_count / total_count * 100.0)), 2)
+
+    ratio = float(row.get("max_aging_ratio") or 0.0)
+    if ratio <= 0:
+        return 0.0
+    if ratio <= 1:
+        ratio *= 100.0
+    return round(min(100.0, max(0.0, ratio)), 2)
+
+
+def _road_region_id(conn: sqlite3.Connection, road_id: int) -> int | None:
+    row = query_one(conn, "SELECT region_id FROM road_segments WHERE road_id = ?", (road_id,))
+    return int(row["region_id"]) if row and row.get("region_id") is not None else None
+
+
 def _apply_ground_layer_adjustment(conn: sqlite3.Connection, row: dict, *, region_id: int | None = None, road_id: int | None = None) -> dict:
     data = dict(row)
     if region_id is not None:
@@ -106,6 +200,7 @@ def load_or_build_feature_row(conn: sqlite3.Connection, region_id: int, analysis
     inspection_risk_avg = query_one(
         conn, "SELECT COALESCE(AVG(risk_score), 0) AS r FROM facility_inspection WHERE region_id = ?", (region_id,)
     )["r"]
+    facility_aging_score = max(float(facility_aging_score), _facility_status_aging_score(conn, region_id))
     facility_aging_score += inspection_risk_avg * 0.1  # 점검 위험도 10% 가산
 
     rainfall_7d = query_one(
@@ -133,6 +228,8 @@ def load_or_build_feature_row(conn: sqlite3.Connection, region_id: int, analysis
         (region_id, analysis_date, analysis_date),
     )["a"]
     groundwater_score = min(8.0, float(groundwater_var_7d) * 4.0)  # variation 0~2 가정
+    if groundwater_score <= 0:
+        groundwater_score = _molit_groundwater_score_for_region(conn, region_id)
 
     env = query_one(
         conn,
@@ -215,6 +312,9 @@ def load_or_build_road_feature_row(conn: sqlite3.Connection, road_id: int, analy
         "SELECT COALESCE(AVG(risk_score), 0) AS r FROM facility_inspection WHERE region_id = (SELECT region_id FROM road_segments WHERE road_id = ?)",
         (road_id,),
     )["r"]
+    parent_region_id = _road_region_id(conn, road_id)
+    if parent_region_id is not None:
+        facility_aging_score = max(float(facility_aging_score), _facility_status_aging_score(conn, parent_region_id))
     facility_aging_score += inspection_risk_avg * 0.1
 
     rainfall_7d = query_one(
@@ -242,6 +342,8 @@ def load_or_build_road_feature_row(conn: sqlite3.Connection, road_id: int, analy
         (road_id, analysis_date, analysis_date),
     )["a"]
     groundwater_score = min(8.0, float(groundwater_var_7d) * 4.0)
+    if groundwater_score <= 0:
+        groundwater_score = _molit_groundwater_score_for_road(conn, road_id)
 
     env = query_one(
         conn,

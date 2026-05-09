@@ -97,7 +97,12 @@ const el = {
   whatIfGprValue: $("whatIfGprValue"),
   whatIfFacility: $("whatIfFacility"),
   whatIfFacilityValue: $("whatIfFacilityValue"),
+  whatIfPastSinkhole: $("whatIfPastSinkhole"),
+  whatIfPastSinkholeValue: $("whatIfPastSinkholeValue"),
+  whatIfEnvironment: $("whatIfEnvironment"),
+  whatIfEnvironmentValue: $("whatIfEnvironmentValue"),
   whatIfConstruction: $("whatIfConstruction"),
+  whatIfTargetOnly: $("whatIfTargetOnly"),
   whatIfSummary: $("whatIfSummary"),
   whatIfResults: $("whatIfResults"),
   metricDetailDialog: $("metricDetailDialog"),
@@ -462,6 +467,7 @@ function setMode(mode, options = {}) {
   state.mode = mode === "live" ? "live" : "scenario";
   const scenario = state.mode === "scenario";
   el.liveControls?.classList.toggle("hidden", scenario);
+  el.whatIfDrawer?.classList.toggle("hidden", !scenario);
   $("scenarioModeMenuButton")?.classList.toggle("active", scenario);
   $("liveModeMenuButton")?.classList.toggle("active", !scenario);
   updateAnalysisTypeControls();
@@ -477,6 +483,15 @@ function updateAnalysisTypeControls() {
   el.roadControlsContainer?.classList.toggle("hidden", !roadMode);
   setText($("top5Title"), roadMode ? "우선 점검 도로 TOP 5" : "우선 점검 TOP 5");
   setText($("top5Description"), roadMode ? "최신 도로 위험 점수 기준 정렬" : "최신 위험 점수 기준 정렬");
+}
+
+function mountWhatIfPanel() {
+  const panel = el.whatIfDrawer;
+  const controlPanel = document.querySelector(".control-panel");
+  if (!panel || !controlPanel || panel.dataset.embedded === "1") return;
+  panel.dataset.embedded = "1";
+  panel.classList.add("embedded");
+  controlPanel.insertAdjacentElement("afterend", panel);
 }
 
 function updatePickOnMapButton() {
@@ -1758,6 +1773,55 @@ function updateWhatIfControls() {
   setText(el.whatIfSummary, `추가 강우 ${rainfall}mm / ${construction ? "대규모 공사 반영" : "대규모 공사 없음"}`);
 }
 
+function renderWhatIfResults(rows = []) {
+  if (!el.whatIfResults) return;
+  el.whatIfResults.innerHTML = "";
+  if (!rows.length) {
+    el.whatIfResults.innerHTML = `<div class="empty-state">시뮬레이션 실행 후 결과가 표시됩니다.</div>`;
+    return;
+  }
+
+  rows.slice(0, 6).forEach((row) => {
+    const original = Number(row.original_score || 0);
+    const simulated = Number(row.simulated_score || 0);
+    const diff = Number(row.score_diff || 0);
+    const drivers = Array.isArray(row.drivers) ? row.drivers.slice(0, 4) : [];
+    const actions = Array.isArray(row.recommendations) ? row.recommendations.slice(0, 3) : [];
+    const card = document.createElement("article");
+    card.className = `whatif-result-card ${diff >= 8 ? "elevated" : ""}`;
+    card.innerHTML = `
+      <div class="whatif-result-head">
+        <strong>${escapeHtml(row.region_name || "-")}</strong>
+        <span>${formatNumber(simulated, 1)}</span>
+      </div>
+      <div class="scenario-score-compare">
+        <div>
+          <small>현재</small>
+          <b>${formatNumber(original, 1)}</b>
+          <i style="width:${Math.max(2, Math.min(100, original))}%"></i>
+        </div>
+        <div>
+          <small>시나리오</small>
+          <b>${formatNumber(simulated, 1)} (${diff >= 0 ? "+" : ""}${formatNumber(diff, 1)})</b>
+          <i class="scenario-bar" style="width:${Math.max(2, Math.min(100, simulated))}%"></i>
+        </div>
+      </div>
+      <div class="whatif-result-meta">
+        <span>${escapeHtml(row.original_level || "-")} → ${escapeHtml(row.new_risk_level || "-")}</span>
+        <span>조치 ${escapeHtml(row.action_level || "-")}</span>
+        <span>신뢰도 ${escapeHtml(row.confidence?.label || "-")}</span>
+      </div>
+      <div class="whatif-drivers">
+        ${drivers.length ? drivers.map((driver) => `<span>${escapeHtml(driver.label)} +${formatNumber(driver.delta, 1)}</span>`).join("") : "<span>추가 상승 요인 없음</span>"}
+      </div>
+      <div class="whatif-actions">
+        ${actions.map((item) => `<span>${escapeHtml(item)}</span>`).join("")}
+      </div>
+    `;
+    el.whatIfResults.appendChild(card);
+  });
+}
+
 async function runWhatIfSimulation() {
   if (state.mode !== "scenario") setMode("scenario", { silent: true });
   updateWhatIfControls();
@@ -1793,8 +1857,11 @@ async function runWhatIfSimulation() {
 }
 
 function openWhatIfPanel() {
+  if (state.mode !== "scenario") setMode("scenario", { silent: true });
+  mountWhatIfPanel();
   updateWhatIfControls();
   el.whatIfDrawer?.classList.remove("hidden");
+  el.whatIfDrawer?.scrollIntoView({ behavior: "smooth", block: "start" });
 }
 
 const WHAT_IF_PRESETS = {
@@ -1804,6 +1871,8 @@ const WHAT_IF_PRESETS = {
   excavation: { horizon: 168, rainfall: 20, groundwater: 0.1, construction: true, depth: 12, distance: 80, gpr: 1, facility: 0 },
   groundwater: { horizon: 72, rainfall: 40, groundwater: 1.5, construction: false, depth: 0, distance: 500, gpr: 0, facility: 0 },
   pipe_damage: { horizon: 24, rainfall: 30, groundwater: 0.7, construction: false, depth: 0, distance: 500, gpr: 2, facility: 20 },
+  old_building: { horizon: 72, rainfall: 20, groundwater: 0.2, construction: false, depth: 0, distance: 500, gpr: 0, facility: 30, past: 0, environment: 2 },
+  compound: { horizon: 72, rainfall: 120, groundwater: 0.8, construction: true, depth: 10, distance: 120, gpr: 2, facility: 20, past: 1, environment: 2.5 },
 };
 
 function applyWhatIfPreset() {
@@ -1820,6 +1889,8 @@ function applyWhatIfPreset() {
   if (el.whatIfDistance) el.whatIfDistance.value = String(preset.distance);
   if (el.whatIfGpr) el.whatIfGpr.value = String(preset.gpr);
   if (el.whatIfFacility) el.whatIfFacility.value = String(preset.facility);
+  if (el.whatIfPastSinkhole) el.whatIfPastSinkhole.value = String(preset.past || 0);
+  if (el.whatIfEnvironment) el.whatIfEnvironment.value = String(preset.environment || 0);
   updateWhatIfControls();
 }
 
@@ -1841,6 +1912,32 @@ function updateWhatIfControls() {
   setText(
     el.whatIfSummary,
     `${horizon}시간 예측 / 강우 ${rainfall}mm / 지하수 ${groundwater.toFixed(1)}m / ${construction ? "대규모 공사 반영" : "대규모 공사 없음"}`,
+  );
+}
+
+function updateWhatIfControls() {
+  const rainfall = Number(el.whatIfRainfall?.value || 0);
+  const groundwater = Number(el.whatIfGroundwater?.value || 0);
+  const depth = Number(el.whatIfDepth?.value || 0);
+  const distance = Number(el.whatIfDistance?.value || 0);
+  const gpr = Number(el.whatIfGpr?.value || 0);
+  const facility = Number(el.whatIfFacility?.value || 0);
+  const past = Number(el.whatIfPastSinkhole?.value || 0);
+  const environment = Number(el.whatIfEnvironment?.value || 0);
+  const horizon = Number(el.whatIfHorizon?.value || 24);
+  const construction = Boolean(el.whatIfConstruction?.checked);
+  const targetOnly = Boolean(el.whatIfTargetOnly?.checked);
+  setText(el.whatIfRainfallValue, `${rainfall}mm`);
+  setText(el.whatIfGroundwaterValue, `${groundwater.toFixed(1)}m`);
+  setText(el.whatIfDepthValue, `${depth}m`);
+  setText(el.whatIfDistanceValue, `${distance}m`);
+  setText(el.whatIfGprValue, `${gpr}개`);
+  setText(el.whatIfFacilityValue, `${facility}점`);
+  setText(el.whatIfPastSinkholeValue, `${past}건`);
+  setText(el.whatIfEnvironmentValue, `${environment.toFixed(1)}점`);
+  setText(
+    el.whatIfSummary,
+    `${horizon}시간 예측 / 강우 ${rainfall}mm / 지하수 ${groundwater.toFixed(1)}m / GPR ${gpr}개 / ${construction ? "공사 반영" : "공사 없음"} / ${targetOnly ? "선택 지역만" : "전체 지역"}`,
   );
 }
 
@@ -1897,6 +1994,9 @@ async function runWhatIfSimulation() {
         construction_distance_m: Number(el.whatIfDistance?.value || 500),
         gpr_anomaly_count: Number(el.whatIfGpr?.value || 0),
         facility_aging_delta: Number(el.whatIfFacility?.value || 0),
+        past_sinkhole_delta_count: Number(el.whatIfPastSinkhole?.value || 0),
+        environment_delta_score: Number(el.whatIfEnvironment?.value || 0),
+        target_region_id: el.whatIfTargetOnly?.checked ? state.selectedRegionId : null,
       }),
     });
     const rows = Array.isArray(payload) ? payload : payload.results || [];
@@ -2170,7 +2270,10 @@ function bindEvents() {
   el.whatIfDistance?.addEventListener("input", updateWhatIfControls);
   el.whatIfGpr?.addEventListener("input", updateWhatIfControls);
   el.whatIfFacility?.addEventListener("input", updateWhatIfControls);
+  el.whatIfPastSinkhole?.addEventListener("input", updateWhatIfControls);
+  el.whatIfEnvironment?.addEventListener("input", updateWhatIfControls);
   el.whatIfConstruction?.addEventListener("change", updateWhatIfControls);
+  el.whatIfTargetOnly?.addEventListener("change", updateWhatIfControls);
   el.selectAllReports?.addEventListener("change", () => {
     state.selectedReports = el.selectAllReports.checked
       ? new Set(state.reports.map((row) => row.file_name))
@@ -2239,6 +2342,7 @@ function bindEvents() {
 
 async function bootstrap() {
   bindEvents();
+  mountWhatIfPanel();
   setStatus(t().loading);
   applyLanguage(localStorage.getItem("sinkhole_lang") || "ko");
   const clock = updateClock();
@@ -2252,6 +2356,8 @@ async function bootstrap() {
     await refreshSummaryPanels();
     startDashboardAutoRefresh();
     setMode("scenario", { silent: true });
+    updateWhatIfControls();
+    renderWhatIfResults(state.simulationRows);
     if (state.selectedRegionId) await runScenarioAnalysis(clock, { manageBusy: false });
     await refreshReportList();
     setStatus(t().ready);
@@ -2265,6 +2371,79 @@ window.openHelp = openHelp;
 window.closeHelp = closeHelp;
 window.openAiChat = openAiChat;
 window.closeAiChat = closeAiChat;
+updateWhatIfControls = function () {
+  const rainfall = Number(el.whatIfRainfall?.value || 0);
+  const groundwater = Number(el.whatIfGroundwater?.value || 0);
+  const depth = Number(el.whatIfDepth?.value || 0);
+  const distance = Number(el.whatIfDistance?.value || 0);
+  const gpr = Number(el.whatIfGpr?.value || 0);
+  const facility = Number(el.whatIfFacility?.value || 0);
+  const past = Number(el.whatIfPastSinkhole?.value || 0);
+  const environment = Number(el.whatIfEnvironment?.value || 0);
+  const horizon = Number(el.whatIfHorizon?.value || 24);
+  const construction = Boolean(el.whatIfConstruction?.checked);
+  const targetOnly = Boolean(el.whatIfTargetOnly?.checked);
+  setText(el.whatIfRainfallValue, `${rainfall}mm`);
+  setText(el.whatIfGroundwaterValue, `${groundwater.toFixed(1)}m`);
+  setText(el.whatIfDepthValue, `${depth}m`);
+  setText(el.whatIfDistanceValue, `${distance}m`);
+  setText(el.whatIfGprValue, `${gpr}개`);
+  setText(el.whatIfFacilityValue, `${facility}점`);
+  setText(el.whatIfPastSinkholeValue, `${past}건`);
+  setText(el.whatIfEnvironmentValue, `${environment.toFixed(1)}점`);
+  setText(
+    el.whatIfSummary,
+    `${horizon}시간 예측 / 강우 ${rainfall}mm / 지하수 ${groundwater.toFixed(1)}m / GPR ${gpr}개 / ${construction ? "공사 반영" : "공사 없음"} / ${targetOnly ? "선택 지역만" : "전체 지역"}`,
+  );
+};
+renderWhatIfResults = function (rows = []) {
+  if (!el.whatIfResults) return;
+  el.whatIfResults.innerHTML = "";
+  if (!rows.length) {
+    el.whatIfResults.innerHTML = `<div class="empty-state">시뮬레이션 실행 후 결과가 표시됩니다.</div>`;
+    return;
+  }
+
+  rows.slice(0, 6).forEach((row) => {
+    const original = Number(row.original_score || 0);
+    const simulated = Number(row.simulated_score || 0);
+    const diff = Number(row.score_diff || 0);
+    const drivers = Array.isArray(row.drivers) ? row.drivers.slice(0, 4) : [];
+    const actions = Array.isArray(row.recommendations) ? row.recommendations.slice(0, 3) : [];
+    const card = document.createElement("article");
+    card.className = `whatif-result-card ${diff >= 8 ? "elevated" : ""}`;
+    card.innerHTML = `
+      <div class="whatif-result-head">
+        <strong>${escapeHtml(row.region_name || "-")}</strong>
+        <span>${formatNumber(simulated, 1)}</span>
+      </div>
+      <div class="scenario-score-compare">
+        <div>
+          <small>현재</small>
+          <b>${formatNumber(original, 1)}</b>
+          <i style="width:${Math.max(2, Math.min(100, original))}%"></i>
+        </div>
+        <div>
+          <small>시나리오</small>
+          <b>${formatNumber(simulated, 1)} (${diff >= 0 ? "+" : ""}${formatNumber(diff, 1)})</b>
+          <i class="scenario-bar" style="width:${Math.max(2, Math.min(100, simulated))}%"></i>
+        </div>
+      </div>
+      <div class="whatif-result-meta">
+        <span>${escapeHtml(row.original_level || "-")} → ${escapeHtml(row.new_risk_level || "-")}</span>
+        <span>조치 ${escapeHtml(row.action_level || "-")}</span>
+        <span>신뢰도 ${escapeHtml(row.confidence?.label || "-")}</span>
+      </div>
+      <div class="whatif-drivers">
+        ${drivers.length ? drivers.map((driver) => `<span>${escapeHtml(driver.label)} +${formatNumber(driver.delta, 1)}</span>`).join("") : "<span>추가 상승 요인 없음</span>"}
+      </div>
+      <div class="whatif-actions">
+        ${actions.map((item) => `<span>${escapeHtml(item)}</span>`).join("")}
+      </div>
+    `;
+    el.whatIfResults.appendChild(card);
+  });
+};
 window.__sinkholeActions = {
   analyze: runAnalysis,
   report: generateReport,
@@ -2277,7 +2456,7 @@ window.__sinkholeActions = {
   closeAiChat,
 };
 window.__sinkholeAppReady = true;
-window.__sinkholeAssetVersion = "20260508-live-public-api";
+window.__sinkholeAssetVersion = "20260509-scenario-controls";
 
 bootstrap().catch((error) => {
   console.error(error);

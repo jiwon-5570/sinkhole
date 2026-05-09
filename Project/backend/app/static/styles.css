@@ -1392,9 +1392,32 @@ input[type="range"] {
   box-shadow: -22px 0 42px rgba(0, 0, 0, 0.36);
 }
 
+.whatif-drawer.embedded {
+  position: static;
+  inset: auto;
+  z-index: auto;
+  display: block;
+  background: transparent;
+  margin-bottom: 18px;
+}
+
+.whatif-drawer.embedded .drawer-card {
+  width: 100%;
+  min-height: 0;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: linear-gradient(180deg, rgba(20, 38, 62, 0.96), rgba(11, 24, 42, 0.94));
+  box-shadow: var(--shadow);
+}
+
+.whatif-drawer.embedded .icon-button {
+  width: auto;
+  min-width: 36px;
+}
+
 .drawer-grid {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 14px;
 }
 
@@ -1410,6 +1433,11 @@ input[type="range"] {
   border: 1px solid var(--line);
   border-radius: var(--radius);
   background: rgba(255, 255, 255, 0.04);
+}
+
+.whatif-result-card.elevated {
+  border-color: rgba(246, 185, 59, 0.45);
+  background: rgba(246, 185, 59, 0.075);
 }
 
 .whatif-result-head {
@@ -1431,6 +1459,38 @@ input[type="range"] {
   color: var(--amber);
   font-size: 18px;
   font-weight: 800;
+}
+
+.scenario-score-compare {
+  display: grid;
+  gap: 8px;
+}
+
+.scenario-score-compare div {
+  display: grid;
+  grid-template-columns: 62px 120px minmax(90px, 1fr);
+  align-items: center;
+  gap: 10px;
+}
+
+.scenario-score-compare small {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.scenario-score-compare b {
+  color: var(--text);
+  font-size: 12px;
+}
+
+.scenario-score-compare i {
+  height: 7px;
+  border-radius: 999px;
+  background: rgba(126, 151, 184, 0.46);
+}
+
+.scenario-score-compare .scenario-bar {
+  background: linear-gradient(90deg, var(--amber), var(--red));
 }
 
 .whatif-result-meta,
@@ -2021,5 +2081,21 @@ input[type="range"] {
 
   .bar-track {
     width: 100%;
+  }
+}
+
+@media (max-width: 1180px) {
+  .drawer-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 560px) {
+  .drawer-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .scenario-score-compare div {
+    grid-template-columns: 1fr;
   }
 }
