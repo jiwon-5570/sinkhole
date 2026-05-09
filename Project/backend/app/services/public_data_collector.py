@@ -1712,7 +1712,9 @@ def _fresh_source_skip_reason(conn: sqlite3.Connection, source: PublicDataSource
     )
     count = conn.execute("SELECT COUNT(*) FROM molit_ground_boreholes").fetchone()[0]
     fetched_at = row.get("fetched_at") if row else None
-    if not count or not fetched_at:
+    if int(count or 0) < int(settings.molit_borehole_min_cached_rows):
+        return None
+    if not fetched_at:
         return None
     try:
         latest = datetime.fromisoformat(str(fetched_at))

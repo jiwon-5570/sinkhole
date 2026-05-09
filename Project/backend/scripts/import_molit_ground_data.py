@@ -198,7 +198,7 @@ def import_layers(
 ) -> dict[str, Any]:
     actual_encoding = _detect_encoding(path, encoding)
     source_file = _source_file(path)
-    with path.open("r", encoding=actual_encoding, newline="") as handle:
+    with path.open("r", encoding=actual_encoding, errors="replace", newline="") as handle:
         reader = csv.DictReader(handle)
         fieldnames = list(reader.fieldnames or [])
         column_map = _build_column_map(fieldnames, LAYER_ALIASES)
@@ -281,7 +281,7 @@ def import_boreholes(
 ) -> dict[str, Any]:
     actual_encoding = _detect_encoding(path, encoding)
     source_file = _source_file(path)
-    with path.open("r", encoding=actual_encoding, newline="") as handle:
+    with path.open("r", encoding=actual_encoding, errors="replace", newline="") as handle:
         reader = csv.DictReader(handle)
         fieldnames = list(reader.fieldnames or [])
         column_map = _build_column_map(fieldnames, BOREHOLE_ALIASES)

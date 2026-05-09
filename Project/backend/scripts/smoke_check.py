@@ -82,6 +82,8 @@ def main() -> None:
                 "SINKHOLE_APPLY_SCHEMA_ON_START": "1",
                 "SINKHOLE_SEED_DEMO": "0",
                 "SINKHOLE_ANALYZE_ON_START": "1",
+                "SINKHOLE_PUBLIC_DATA_AUTO_COLLECT": "0",
+                "SINKHOLE_PUBLIC_DATA_COLLECT_ON_START": "0",
                 "SINKHOLE_ENABLE_BASIC_AUTH": "1",
                 "SINKHOLE_BASIC_AUTH_USERNAME": username,
                 "SINKHOLE_BASIC_AUTH_PASSWORD": password,

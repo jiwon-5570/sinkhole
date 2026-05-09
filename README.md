@@ -42,7 +42,7 @@ Project/backend/data/raw/public/molit_ground_layers/
 https://api.odcloud.kr/api/15069365/v1/uddi:e3857d80-b97e-4693-84d5-f2b4f37959f0
 ```
 
-좌표 변환 기준은 기본 `EPSG:5181`입니다. 필요하면 `.env`에서 `SINKHOLE_MOLIT_BOREHOLE_COORD_CRS`로 바꿀 수 있습니다.
+좌표 변환 기준은 기본 `EPSG:5186`입니다. 필요하면 `.env`에서 `SINKHOLE_MOLIT_BOREHOLE_COORD_CRS`로 바꿀 수 있습니다. 시추공 API는 전국 데이터와 지층 CSV 매칭을 위해 기본 최대 500페이지까지 수집합니다.
 
 시추공 CSV 위치는 API 장애 시의 보조 수동 적재용입니다.
 
