@@ -13,6 +13,12 @@ from app.db.core import query_all, query_one
 from app.main_deps import get_db
 from app.models.schemas import AiChatRequest
 from app.routes.analysis import analyze_region
+from app.services.ai_evidence import (
+    build_evidence_context,
+    build_factor_evidence_answer,
+    is_evidence_question,
+)
+from app.services.monitoring_points import active_monitoring_count, recent_monitoring_detection_count
 from app.services.reasoning import FACTOR_LABELS
 from app.utils.response import ok
 
@@ -58,6 +64,27 @@ REGION_ADDRESS_ALIASES = {
     900010: "마포·상암권",
     900011: "중구·용산권",
     900012: "구로·금천권",
+}
+
+
+FACTOR_KEYWORDS = {
+    "past_sinkhole": ("과거", "사고", "침하 이력", "지반침하", "싱크홀 이력"),
+    "gpr": ("gpr", "탐사", "공동", "물리탐사"),
+    "facility": ("시설", "시설물", "노후", "노후도", "관로", "상수", "하수", "매설물"),
+    "rainfall": ("강우", "강수", "비", "호우"),
+    "groundwater": ("지하수", "수위", "관측공"),
+    "environment": ("환경", "밀집", "건물", "도로 밀도", "지층", "토질"),
+    "construction": ("공사", "굴착", "도로굴착", "시공", "지하안전"),
+}
+
+FACTOR_FEATURE_KEYS = {
+    "past_sinkhole": "past_sinkhole_count",
+    "gpr": "gpr_detected_count",
+    "facility": "facility_aging_score",
+    "rainfall": "rainfall_score",
+    "groundwater": "groundwater_score",
+    "environment": "environment_score",
+    "construction": "construction_score",
 }
 
 
@@ -138,6 +165,19 @@ def _latest_analysis_date(conn: sqlite3.Connection) -> str | None:
     return str(row["analysis_date"]) if row and row.get("analysis_date") else None
 
 
+def _recent_detection_count(conn: sqlite3.Connection) -> int:
+    recent_sinkholes = query_one(
+        conn,
+        """
+        SELECT COUNT(*) AS count
+        FROM sinkhole_history
+        WHERE occurrence_date IS NOT NULL
+          AND date(occurrence_date) >= date('now', 'localtime', '-1 day')
+        """,
+    )
+    return int((recent_sinkholes or {}).get("count") or 0) + recent_monitoring_detection_count(conn)
+
+
 def _summary(conn: sqlite3.Connection, analysis_date: str | None) -> dict[str, Any]:
     if not analysis_date:
         return {
@@ -145,8 +185,8 @@ def _summary(conn: sqlite3.Connection, analysis_date: str | None) -> dict[str, A
             "high_risk_count": 0,
             "very_high_risk_count": 0,
             "average_risk_score": 0,
-            "monitoring_point_count": 0,
-            "recent_detection_count": 0,
+            "monitoring_point_count": active_monitoring_count(conn),
+            "recent_detection_count": _recent_detection_count(conn),
         }
     row = query_one(
         conn,
@@ -162,17 +202,8 @@ def _summary(conn: sqlite3.Connection, analysis_date: str | None) -> dict[str, A
         (analysis_date,),
     )
     summary = dict(row or {"region_count": 0, "high_risk_count": 0, "very_high_risk_count": 0, "average_risk_score": 0})
-    recent_detection = query_one(
-        conn,
-        """
-        SELECT COUNT(*) AS count
-        FROM sinkhole_history
-        WHERE occurrence_date IS NOT NULL
-          AND date(occurrence_date) >= date('now', '-1 day')
-        """,
-    )
-    summary["monitoring_point_count"] = 0
-    summary["recent_detection_count"] = int((recent_detection or {}).get("count") or 0)
+    summary["monitoring_point_count"] = active_monitoring_count(conn)
+    summary["recent_detection_count"] = _recent_detection_count(conn)
     return summary
 
 
@@ -195,7 +226,7 @@ def _top_regions(conn: sqlite3.Connection, analysis_date: str | None, limit: int
 
 
 def _all_regions(conn: sqlite3.Connection) -> list[dict[str, Any]]:
-    return [_with_address(row) for row in query_all(conn, "SELECT region_id, region_name FROM regions ORDER BY region_id")]
+    return [_with_address(row) for row in query_all(conn, "SELECT region_id, region_name, latitude, longitude FROM regions ORDER BY region_id")]
 
 
 def _match_region(conn: sqlite3.Connection, text: str) -> dict[str, Any] | None:
@@ -256,6 +287,378 @@ def _action_text(factors: list[tuple[str, float]]) -> str:
     if not actions:
         actions = ["정기 모니터링을 유지하고, 강우 직후와 공사 발생 시점에는 재평가를 수행해야 합니다."]
     return " ".join(actions[:3])
+
+
+def _factor_key_from_message(message: str) -> str | None:
+    normalized = _normalize(message)
+    for key, keywords in FACTOR_KEYWORDS.items():
+        if any(_normalize(keyword) in normalized for keyword in keywords):
+            return key
+    return None
+
+
+def _is_factor_detail_question(message: str) -> bool:
+    normalized = _normalize(message)
+    if not normalized:
+        return False
+    has_factor = _factor_key_from_message(message) is not None or any(
+        _normalize(word) in normalized for word in ("위험기여요인", "기여요인", "기여도", "위험요인")
+    )
+    asks_detail = any(
+        _normalize(word) in normalized
+        for word in ("왜", "근거", "정확", "어느", "어떤", "데이터", "자료", "점수", "산정", "계산", "원인", "영향", "때문", "관련", "맞아")
+    )
+    return has_factor and asks_detail
+
+
+def _factor_formula_text(factor_key: str, feature_value: float, contribution: float) -> str:
+    if factor_key == "past_sinkhole":
+        return f"산식은 min(30, 과거 침하 건수 x 8)입니다. 현재 원자료 지표 {feature_value:.1f}건이 반영되어 기여점수는 {contribution:.1f}점입니다."
+    if factor_key == "gpr":
+        return f"산식은 min(30, GPR/탐사 지표 x 12)입니다. 현재 원자료 지표 {feature_value:.1f}건 상당이 반영되어 기여점수는 {contribution:.1f}점입니다."
+    if factor_key == "facility":
+        uncapped = feature_value * 0.25
+        cap_text = "상한 15점에 걸렸기 때문에 15점으로 제한됐습니다" if uncapped > 15 else "상한에는 걸리지 않았습니다"
+        return f"산식은 min(15, 시설물 노후도 원자료 지표 x 0.25)입니다. 현재 원자료 지표 {feature_value:.1f}점 x 0.25 = {uncapped:.1f}점이고, {cap_text}."
+    if factor_key == "rainfall":
+        return f"산식은 최근 7일 강우 지표를 0~10점 범위로 반영합니다. 현재 강우 원자료 지표 {feature_value:.1f}점이 그대로 기여점수 {contribution:.1f}점으로 들어갔습니다."
+    if factor_key == "groundwater":
+        return f"산식은 지하수 변동 또는 시추공 지하수위 대체 지표를 0~8점 범위로 반영합니다. 현재 원자료 지표 {feature_value:.1f}점이 기여점수 {contribution:.1f}점으로 들어갔습니다."
+    if factor_key == "environment":
+        return f"산식은 건물/도로 밀집도와 지층 보정값을 0~6점 범위로 반영합니다. 현재 환경 원자료 지표 {feature_value:.1f}점이 기여점수 {contribution:.1f}점으로 들어갔습니다."
+    if factor_key == "construction":
+        uncapped = feature_value * 0.2
+        cap_text = "상한 4점에 걸렸습니다" if uncapped > 4 else "상한에는 걸리지 않았습니다"
+        return f"산식은 min(4, 공사 영향 원자료 지표 x 0.2)입니다. 현재 원자료 지표 {feature_value:.1f}점 x 0.2 = {uncapped:.1f}점이고, {cap_text}."
+    return f"현재 원자료 지표 {feature_value:.1f}, 기여점수 {contribution:.1f}점입니다."
+
+
+def _row_label(row: dict[str, Any], *keys: str) -> str:
+    for key in keys:
+        value = row.get(key)
+        if value not in (None, ""):
+            return str(value)
+    return "-"
+
+
+def _join_evidence(items: list[str], *, empty: str) -> str:
+    return "; ".join(items[:5]) if items else empty
+
+
+def _facility_evidence(conn: sqlite3.Connection, region_id: int) -> tuple[str, str]:
+    status_rows = query_all(
+        conn,
+        """
+        SELECT facility_name, facility_type, address, aging_ratio, aging_count, total_count, source_name
+        FROM facility_status
+        WHERE region_id = ?
+        ORDER BY COALESCE(aging_ratio, 0) DESC, COALESCE(aging_count, 0) DESC, id ASC
+        LIMIT 5
+        """,
+        (region_id,),
+    )
+    inspection_rows = query_all(
+        conn,
+        """
+        SELECT facility_name, facility_type, address, inspection_date, diagnosis_result, risk_score, source_name
+        FROM facility_inspection
+        WHERE region_id = ?
+        ORDER BY COALESCE(risk_score, 0) DESC, inspection_date DESC, id ASC
+        LIMIT 5
+        """,
+        (region_id,),
+    )
+    summary = query_one(
+        conn,
+        """
+        SELECT
+            COUNT(*) AS row_count,
+            COALESCE(SUM(total_count), 0) AS total_count,
+            COALESCE(SUM(aging_count), 0) AS aging_count,
+            COALESCE(AVG(aging_ratio), 0) AS avg_aging_ratio
+        FROM facility_status
+        WHERE region_id = ?
+        """,
+        (region_id,),
+    ) or {}
+    status_text = _join_evidence(
+        [
+            f"{_row_label(row, 'facility_name')}({row.get('facility_type') or '-'}, {row.get('address') or '주소 없음'}, 노후비율 {_fmt(row.get('aging_ratio'))})"
+            for row in status_rows
+        ],
+        empty="facility_status에 이 지역의 세부 시설 행이 없습니다.",
+    )
+    inspection_text = _join_evidence(
+        [
+            f"{_row_label(row, 'facility_name')}({row.get('facility_type') or '-'}, {row.get('address') or '주소 없음'}, 점검 {row.get('inspection_date') or '-'}, 위험지표 {_fmt(row.get('risk_score'))})"
+            for row in inspection_rows
+        ],
+        empty="facility_inspection에 이 지역의 점검 행이 없습니다.",
+    )
+    types = {str(row.get("facility_type") or "") for row in [*status_rows, *inspection_rows] if row.get("facility_type")}
+    pipe_like = any(("관" in item or "상수" in item or "하수" in item) for item in types)
+    limitation = (
+        "현재 세부 행에는 관로로 확인되는 시설 유형도 포함되어 있어 관로 점검을 우선 검토할 수 있습니다."
+        if pipe_like
+        else "현재 확인된 세부 행은 주로 건축물/시설 단위입니다. 따라서 노후 관로가 원인이라고 단정하면 안 되고, 관로 영향은 별도 상하수도/GPR 점검으로 확인해야 합니다."
+    )
+    basis = (
+        f"facility_status 집계는 {int(summary.get('row_count') or 0)}행, 총 {int(summary.get('total_count') or 0)}개 중 "
+        f"노후 {int(summary.get('aging_count') or 0)}개, 평균 노후비율 {_fmt(summary.get('avg_aging_ratio'))}입니다. "
+        f"노후 근거 행: {status_text}. 점검 위험도 상위 행: {inspection_text}."
+    )
+    return basis, limitation
+
+
+def _past_sinkhole_evidence(conn: sqlite3.Connection, region_id: int) -> tuple[str, str]:
+    rows = query_all(
+        conn,
+        """
+        SELECT occurrence_date, cause_type, damage_scale, address, source_name
+        FROM sinkhole_history
+        WHERE region_id = ?
+        ORDER BY occurrence_date DESC, COALESCE(damage_scale, 0) DESC
+        LIMIT 5
+        """,
+        (region_id,),
+    )
+    text = _join_evidence(
+        [
+            f"{row.get('occurrence_date') or '-'} {row.get('address') or '주소 없음'} / 원인 {row.get('cause_type') or '미상'} / 규모 {_fmt(row.get('damage_scale'))}"
+            for row in rows
+        ],
+        empty="sinkhole_history에 이 지역의 과거 침하 사고 행이 없습니다.",
+    )
+    return text, "과거 사고는 반복 위험의 근거지만, 현재 같은 위치에서 침하가 진행 중이라는 뜻은 아닙니다."
+
+
+def _gpr_evidence(conn: sqlite3.Connection, region_id: int) -> tuple[str, str]:
+    gpr_rows = query_all(
+        conn,
+        """
+        SELECT inspection_date, cavity_count, depth_estimate, inspection_method, address, source_name
+        FROM gpr_inspection
+        WHERE region_id = ?
+        ORDER BY COALESCE(cavity_count, 0) DESC, inspection_date DESC
+        LIMIT 5
+        """,
+        (region_id,),
+    )
+    geo_rows = query_all(
+        conn,
+        """
+        SELECT survey_method, survey_point_name, address, survey_length_m, source_name
+        FROM molit_aggregate_geophysics
+        WHERE region_id = ?
+        ORDER BY COALESCE(survey_length_m, 0) DESC, id ASC
+        LIMIT 5
+        """,
+        (region_id,),
+    )
+    gpr_text = _join_evidence(
+        [
+            f"{row.get('inspection_date') or '-'} {row.get('address') or '주소 없음'} / 공동 {int(row.get('cavity_count') or 0)}건 / 심도 {_fmt(row.get('depth_estimate'))}m"
+            for row in gpr_rows
+        ],
+        empty="gpr_inspection에 직접 공동 탐지 행이 없습니다.",
+    )
+    geo_text = _join_evidence(
+        [
+            f"{row.get('survey_point_name') or row.get('address') or '위치명 없음'} / 방법 {row.get('survey_method') or '-'} / 연장 {_fmt(row.get('survey_length_m'))}m"
+            for row in geo_rows
+        ],
+        empty="molit_aggregate_geophysics에 보조 탐사 행이 없습니다.",
+    )
+    return f"직접 GPR 근거: {gpr_text}. 보조 물리탐사 근거: {geo_text}.", "직접 공동 탐지 행이 없고 보조 탐사만 있으면 공동이 확인됐다고 말하지 않고 탐사 가능성 지표로만 봅니다."
+
+
+def _rainfall_evidence(conn: sqlite3.Connection, region_id: int, analysis_date: str | None) -> tuple[str, str]:
+    rows = query_all(
+        conn,
+        """
+        SELECT record_date, ROUND(SUM(rainfall), 2) AS rainfall, GROUP_CONCAT(DISTINCT station_name) AS stations
+        FROM weather_data
+        WHERE region_id = ?
+          AND record_date >= date(?, '-7 day')
+          AND record_date <= date(?)
+        GROUP BY record_date
+        ORDER BY record_date DESC
+        LIMIT 7
+        """,
+        (region_id, analysis_date or "", analysis_date or ""),
+    )
+    text = _join_evidence(
+        [
+            f"{row.get('record_date')}: {row.get('rainfall') or 0}mm(관측소 {row.get('stations') or '-'})"
+            for row in rows
+        ],
+        empty="weather_data에 분석일 기준 최근 7일 강우 행이 없습니다.",
+    )
+    return text, "강우는 실제 침하 확정 근거가 아니라 단기 지반 약화 가능성을 올리는 보조 변수입니다. 관측소명이 대상 지역과 맞지 않으면 데이터 매핑 점검이 필요합니다."
+
+
+def _groundwater_evidence(conn: sqlite3.Connection, region_id: int, target: dict[str, Any] | None) -> tuple[str, str]:
+    rows = query_all(
+        conn,
+        """
+        SELECT record_date, groundwater_level, variation, station_name, source_name
+        FROM groundwater_data
+        WHERE region_id = ?
+        ORDER BY record_date DESC
+        LIMIT 5
+        """,
+        (region_id,),
+    )
+    if rows:
+        text = _join_evidence(
+            [
+                f"{row.get('record_date') or '-'} {row.get('station_name') or '-'} / 수위 {_fmt(row.get('groundwater_level'))} / 변동 {_fmt(row.get('variation'))}"
+                for row in rows
+            ],
+            empty="",
+        )
+        return text, "지하수 관측값이 있을 때는 최근 변동폭을 우선 반영합니다."
+
+    lat = _num((target or {}).get("latitude"), None)
+    lon = _num((target or {}).get("longitude"), None)
+    borehole_rows: list[dict[str, Any]] = []
+    if lat is not None and lon is not None:
+        borehole_rows = query_all(
+            conn,
+            """
+            SELECT borehole_code, project_name, address, groundwater_level_m, total_depth_m, source_name
+            FROM molit_ground_boreholes
+            WHERE latitude IS NOT NULL
+              AND longitude IS NOT NULL
+              AND groundwater_level_m IS NOT NULL
+            ORDER BY ((latitude - ?) * (latitude - ?)) + ((longitude - ?) * (longitude - ?)) ASC
+            LIMIT 5
+            """,
+            (lat, lat, lon, lon),
+        )
+    text = _join_evidence(
+        [
+            f"{row.get('borehole_code') or '-'} {row.get('address') or row.get('project_name') or '주소 없음'} / 지하수위 {_fmt(row.get('groundwater_level_m'))}m / 굴진심도 {_fmt(row.get('total_depth_m'))}m"
+            for row in borehole_rows
+        ],
+        empty="groundwater_data와 근접 시추공 지하수위 행이 없습니다.",
+    )
+    return text, "직접 지하수 관측값이 없으면 국토교통부 시추공 지하수위로 대체 추정합니다. 이 경우는 확정 관측이 아니라 대체 지표입니다."
+
+
+def _environment_evidence(conn: sqlite3.Connection, region_id: int, features: dict[str, Any]) -> tuple[str, str]:
+    rows = query_all(
+        conn,
+        """
+        SELECT building_density, road_density, land_use_type
+        FROM environment_features
+        WHERE region_id = ?
+        ORDER BY id DESC
+        LIMIT 5
+        """,
+        (region_id,),
+    )
+    text = _join_evidence(
+        [
+            f"{row.get('land_use_type') or '-'} / 건물밀도 {_fmt(row.get('building_density'))} / 도로밀도 {_fmt(row.get('road_density'))}"
+            for row in rows
+        ],
+        empty="environment_features에 이 지역의 환경 밀집도 행이 없습니다.",
+    )
+    ground_layer = features.get("ground_layer_summary") or {}
+    layer_text = (
+        f"지층 보정은 근접 지층 {int(ground_layer.get('nearby_count') or 0)}건, 지층 점수 {_fmt(ground_layer.get('score'))}점입니다."
+        if ground_layer
+        else "지층 보정 정보는 현재 payload에 없습니다."
+    )
+    return f"{text}. {layer_text}", "환경 점수는 개별 사고 원인 확정이 아니라 밀집도와 지층 취약성의 배경 위험 지표입니다."
+
+
+def _construction_evidence(conn: sqlite3.Connection, region_id: int) -> tuple[str, str]:
+    rows = query_all(
+        conn,
+        """
+        SELECT construction_type, start_date, scale_score, source_name, address
+        FROM construction_events
+        WHERE region_id = ?
+        ORDER BY COALESCE(scale_score, 0) DESC, start_date DESC, id ASC
+        LIMIT 5
+        """,
+        (region_id,),
+    )
+    text = _join_evidence(
+        [
+            f"{row.get('construction_type') or '-'} / 시작 {row.get('start_date') or '-'} / 규모지표 {_fmt(row.get('scale_score'))} / 주소 {row.get('address') or '주소 없음'} / 출처 {row.get('source_name') or '-'}"
+            for row in rows
+        ],
+        empty="construction_events에 이 지역의 공사 행이 없습니다.",
+    )
+    return text, "공사 행은 굴착·지하안전평가·건축허가 등 공사 영향 가능성을 뜻하며, 실제 지반침하 원인 확정은 현장 확인이 필요합니다."
+
+
+def _factor_evidence(conn: sqlite3.Connection, factor_key: str, target: dict[str, Any], features: dict[str, Any], analysis_date: str | None) -> tuple[str, str]:
+    region_id = int(target.get("region_id") or 0)
+    if factor_key == "facility":
+        return _facility_evidence(conn, region_id)
+    if factor_key == "past_sinkhole":
+        return _past_sinkhole_evidence(conn, region_id)
+    if factor_key == "gpr":
+        return _gpr_evidence(conn, region_id)
+    if factor_key == "rainfall":
+        return _rainfall_evidence(conn, region_id, analysis_date)
+    if factor_key == "groundwater":
+        return _groundwater_evidence(conn, region_id, target)
+    if factor_key == "environment":
+        return _environment_evidence(conn, region_id, features)
+    if factor_key == "construction":
+        return _construction_evidence(conn, region_id)
+    return "해당 위험 기여요인의 세부 근거 조회 로직이 아직 없습니다.", "근거 로직이 없으면 임의로 설명하지 않습니다."
+
+
+def _all_factor_evidence_answer(target: dict[str, Any] | None, payload: dict[str, Any] | None) -> str:
+    if not target or not payload:
+        return "위험 기여요인을 설명할 대상 지역을 찾지 못했습니다. 지역명이나 도로명 주소를 함께 질문해 주세요."
+    features = payload.get("features") or {}
+    breakdown = payload.get("breakdown") or {}
+    lines = []
+    for key in ("past_sinkhole", "gpr", "facility", "rainfall", "groundwater", "environment", "construction"):
+        feature_value = _num(features.get(FACTOR_FEATURE_KEYS.get(key, "")))
+        contribution = _num(breakdown.get(key))
+        lines.append(f"{FACTOR_LABELS.get(key, key)}: 원자료 {feature_value:.1f}, 기여 {contribution:.1f}점")
+    return (
+        f"{_address_label(target)}의 위험 기여요인은 다음과 같습니다.\n"
+        + "\n".join(f"- {line}" for line in lines)
+        + "\n세부 근거가 필요하면 '시설물 노후도 근거', '공사 영향 근거', '지하수 점수 근거'처럼 항목명을 지정해 주세요. "
+        "없는 원천 데이터는 추정과 사실을 구분해 답하겠습니다."
+    )
+
+
+def _factor_evidence_answer(
+    message: str,
+    target: dict[str, Any] | None,
+    payload: dict[str, Any] | None,
+    conn: sqlite3.Connection,
+    analysis_date: str | None,
+) -> str:
+    if not target or not payload:
+        return "위험 기여요인을 설명할 대상 지역을 찾지 못했습니다. 지역명이나 도로명 주소를 함께 질문해 주세요."
+    factor_key = _factor_key_from_message(message)
+    if factor_key is None:
+        return _all_factor_evidence_answer(target, payload)
+
+    features = payload.get("features") or {}
+    breakdown = payload.get("breakdown") or {}
+    feature_key = FACTOR_FEATURE_KEYS.get(factor_key, "")
+    feature_value = _num(features.get(feature_key))
+    contribution = _num(breakdown.get(factor_key))
+    formula = _factor_formula_text(factor_key, feature_value, contribution)
+    evidence, limitation = _factor_evidence(conn, factor_key, target, features, analysis_date)
+    label = FACTOR_LABELS.get(factor_key, factor_key)
+    return (
+        f"{_address_label(target)}의 {label} 기여점수는 {contribution:.1f}점입니다. {formula}\n\n"
+        f"실제 데이터 근거: {evidence}\n\n"
+        f"주의: {limitation} 이 답변은 현재 DB에 들어온 공공데이터와 파일데이터만 근거로 하며, 확인되지 않은 시설명이나 원인은 만들지 않습니다."
+    )
 
 
 def _region_payload(conn: sqlite3.Connection, region_id: int, analysis_date: str | None) -> dict[str, Any] | None:
@@ -527,6 +930,8 @@ def _local_chat_answer(
             return answer
     if _contains(lower, ("목적", "뭐하는", "무슨 프로그램", "사용 목적", "시스템 설명")):
         return _purpose_answer(summary, top_rows, analysis_date)
+    elif conn is not None and is_evidence_question(message):
+        return build_factor_evidence_answer(conn, message, target, payload, analysis_date, _address_label(target))
     elif _contains(lower, ("전체", "현황", "요약", "상황", "현재 상태")) and not _contains(lower, ("이유", "왜")):
         return _overview_answer(summary, top_rows, analysis_date)
     elif _contains(lower, ("어디", "가장", "최고", "높은 곳", "위험지역", "위험 지역")) and not _contains(lower, ("이유", "왜", "원인", "근거")):
@@ -545,6 +950,8 @@ def _local_chat_answer(
 def _requires_verified_local_answer(message: str) -> bool:
     lower = message.lower()
     if _is_definition_question(message):
+        return True
+    if is_evidence_question(message):
         return True
     if _contains(lower, ("관리", "대응", "낮추", "줄이", "조치", "개선", "점수", "보수", "정비", "어디서부터", "어떻게 해야")):
         return True
@@ -576,6 +983,7 @@ def _chat_context(
     target: dict[str, Any] | None,
     payload: dict[str, Any] | None,
     local_answer: str,
+    evidence_context: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     analysis = payload.get("analysis") if payload else None
     features = payload.get("features") if payload else None
@@ -612,6 +1020,7 @@ def _chat_context(
             if target and payload
             else None
         ),
+        "evidence_context": evidence_context or {},
         "safe_local_answer": local_answer,
     }
 
@@ -628,6 +1037,7 @@ def _gemini_prompt(req: AiChatRequest, context: dict[str, Any]) -> str:
 
 반드시 지킬 규칙:
 - 아래 제공된 CONTEXT 데이터만 근거로 답하세요. 없는 사실, 대한민국 전체 실시간 데이터, 외부 최신 뉴스는 지어내지 마세요.
+- 위험 기여요인의 세부 근거를 물으면 확인된 원천 데이터와 추정을 분리하세요. 특정 시설명, 주소, 사고 원인이 CONTEXT에 없으면 없다고 말하고 만들지 마세요.
 - 위치를 말할 때는 내부 키 이름을 말하지 말고, 지역명/시설명 대신 도로명 주소 문자열만 사용하세요.
 - 사용자가 대한민국 전체를 물어도 "현재 시스템에 등록된 서울/수도권 중심 분석 대상 기준"이라고 분명히 말하세요.
 - 위험한 이유를 물으면 점수, 등급, 주요 기여 요인을 함께 설명하세요.
@@ -686,6 +1096,7 @@ def ai_chat(req: AiChatRequest, conn: sqlite3.Connection = Depends(get_db)) -> d
     top_rows = _top_regions(conn, analysis_date, 5)
     target = _target_region(conn, req, top_rows)
     payload = _region_payload(conn, int(target["region_id"]), analysis_date) if target else None
+    evidence_context = build_evidence_context(conn, target, payload, analysis_date)
     local_answer = _local_chat_answer(message, summary, top_rows, analysis_date, target, payload, conn)
 
     engine = "local_fallback"
@@ -695,7 +1106,7 @@ def ai_chat(req: AiChatRequest, conn: sqlite3.Connection = Depends(get_db)) -> d
         engine = "local_verified"
     else:
         try:
-            context = _chat_context(summary, top_rows, analysis_date, target, payload, local_answer)
+            context = _chat_context(summary, top_rows, analysis_date, target, payload, local_answer, evidence_context)
             answer = _answer_with_gemini(req, context)
             answer = _replace_known_locations(answer, top_rows, target)
             engine = "gemini"
@@ -713,6 +1124,7 @@ def ai_chat(req: AiChatRequest, conn: sqlite3.Connection = Depends(get_db)) -> d
                 "target_region": _with_address(target) if target else None,
                 "top_regions": top_rows[:3],
                 "average_risk_score": round(_num(summary["average_risk_score"]), 1),
+                "evidence_factors": list(evidence_context.keys()),
             },
         "quick_questions": [
             "현재 가장 위험한 지역이 어디야?",

@@ -285,11 +285,35 @@ def top_risk_regions(top_n: int = 5, conn: sqlite3.Connection = Depends(get_db))
     rows = query_all(
         conn,
         """
-        SELECT g.region_id, g.region_name, r.total_risk_score, r.risk_level, r.priority_rank, r.analysis_date
-        FROM risk_analysis_result r
-        JOIN regions g ON g.region_id = r.region_id
-        WHERE r.analysis_date = (SELECT MAX(analysis_date) FROM risk_analysis_result)
-        ORDER BY r.total_risk_score DESC
+        WITH latest AS (
+            SELECT *
+            FROM (
+                SELECT
+                    r.*,
+                    ROW_NUMBER() OVER (
+                        PARTITION BY r.region_id
+                        ORDER BY r.analysis_date DESC, r.id DESC
+                    ) AS latest_rank
+                FROM risk_analysis_result r
+            )
+            WHERE latest_rank = 1
+        ),
+        ordered AS (
+            SELECT
+                g.region_id,
+                g.region_name,
+                latest.total_risk_score,
+                latest.risk_level,
+                latest.analysis_date,
+                ROW_NUMBER() OVER (
+                    ORDER BY latest.total_risk_score DESC, latest.id ASC
+                ) AS priority_rank
+            FROM latest
+            JOIN regions g ON g.region_id = latest.region_id
+        )
+        SELECT region_id, region_name, total_risk_score, risk_level, priority_rank, analysis_date
+        FROM ordered
+        ORDER BY priority_rank ASC
         LIMIT ?
         """,
         (top_n,),
@@ -302,12 +326,39 @@ def top_risk_roads(top_n: int = 5, conn: sqlite3.Connection = Depends(get_db)) -
     rows = query_all(
         conn,
         """
-        SELECT rs.road_id, rs.region_id, rs.road_name, rs.center_lat, rs.center_lon,
-               r.total_risk_score, r.risk_level, r.priority_rank, r.analysis_date
-        FROM road_risk_analysis_result r
-        JOIN road_segments rs ON rs.road_id = r.road_id
-        WHERE r.analysis_date = (SELECT MAX(analysis_date) FROM road_risk_analysis_result)
-        ORDER BY r.total_risk_score DESC
+        WITH latest AS (
+            SELECT *
+            FROM (
+                SELECT
+                    r.*,
+                    ROW_NUMBER() OVER (
+                        PARTITION BY r.road_id
+                        ORDER BY r.analysis_date DESC, r.id DESC
+                    ) AS latest_rank
+                FROM road_risk_analysis_result r
+            )
+            WHERE latest_rank = 1
+        ),
+        ordered AS (
+            SELECT
+                rs.road_id,
+                rs.region_id,
+                rs.road_name,
+                rs.center_lat,
+                rs.center_lon,
+                latest.total_risk_score,
+                latest.risk_level,
+                latest.analysis_date,
+                ROW_NUMBER() OVER (
+                    ORDER BY latest.total_risk_score DESC, latest.id ASC
+                ) AS priority_rank
+            FROM latest
+            JOIN road_segments rs ON rs.road_id = latest.road_id
+        )
+        SELECT road_id, region_id, road_name, center_lat, center_lon,
+               total_risk_score, risk_level, priority_rank, analysis_date
+        FROM ordered
+        ORDER BY priority_rank ASC
         LIMIT ?
         """,
         (top_n,),

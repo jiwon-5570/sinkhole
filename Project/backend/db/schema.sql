@@ -315,6 +315,21 @@ CREATE TABLE IF NOT EXISTS local_file_import_state (
     message TEXT
 );
 
+CREATE TABLE IF NOT EXISTS monitoring_points (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT,
+    address TEXT,
+    latitude REAL NOT NULL,
+    longitude REAL NOT NULL,
+    active INTEGER NOT NULL DEFAULT 1,
+    risk_score REAL,
+    risk_level TEXT,
+    last_checked_at TEXT,
+    last_error TEXT,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
 CREATE TABLE IF NOT EXISTS molit_ground_boreholes (
     id INTEGER PRIMARY KEY,
     borehole_code TEXT,

@@ -17,9 +17,21 @@ def risk_distribution(conn: sqlite3.Connection = Depends(get_db)) -> dict:
     rows = query_all(
         conn,
         """
+        WITH latest AS (
+            SELECT *
+            FROM (
+                SELECT
+                    r.*,
+                    ROW_NUMBER() OVER (
+                        PARTITION BY r.region_id
+                        ORDER BY r.analysis_date DESC, r.id DESC
+                    ) AS latest_rank
+                FROM risk_analysis_result r
+            )
+            WHERE latest_rank = 1
+        )
         SELECT risk_level, COUNT(*) AS count
-        FROM risk_analysis_result
-        WHERE analysis_date = (SELECT MAX(analysis_date) FROM risk_analysis_result)
+        FROM latest
         GROUP BY risk_level
         ORDER BY count DESC
         """,
@@ -84,11 +96,34 @@ def top_priority(top_n: int = 10, conn: sqlite3.Connection = Depends(get_db)) ->
     rows = query_all(
         conn,
         """
-        SELECT g.region_id, g.region_name, r.total_risk_score, r.risk_level, r.priority_rank
-        FROM risk_analysis_result r
-        JOIN regions g ON g.region_id = r.region_id
-        WHERE r.analysis_date = (SELECT MAX(analysis_date) FROM risk_analysis_result)
-        ORDER BY r.priority_rank ASC
+        WITH latest AS (
+            SELECT *
+            FROM (
+                SELECT
+                    r.*,
+                    ROW_NUMBER() OVER (
+                        PARTITION BY r.region_id
+                        ORDER BY r.analysis_date DESC, r.id DESC
+                    ) AS latest_rank
+                FROM risk_analysis_result r
+            )
+            WHERE latest_rank = 1
+        ),
+        ordered AS (
+            SELECT
+                g.region_id,
+                g.region_name,
+                latest.total_risk_score,
+                latest.risk_level,
+                ROW_NUMBER() OVER (
+                    ORDER BY latest.total_risk_score DESC, latest.id ASC
+                ) AS priority_rank
+            FROM latest
+            JOIN regions g ON g.region_id = latest.region_id
+        )
+        SELECT region_id, region_name, total_risk_score, risk_level, priority_rank
+        FROM ordered
+        ORDER BY priority_rank ASC
         LIMIT ?
         """,
         (top_n,),

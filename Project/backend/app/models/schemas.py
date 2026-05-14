@@ -80,5 +80,12 @@ class CommercialReportRequest(BaseModel):
     client_utc_offset_minutes: int | None = None
 
 
+class MonitoringPointRequest(BaseModel):
+    name: str | None = Field(default=None, max_length=120)
+    address: str | None = Field(default=None, max_length=300)
+    latitude: float = Field(..., ge=-90, le=90)
+    longitude: float = Field(..., ge=-180, le=180)
+
+
 class ReportFilesRequest(BaseModel):
     file_names: list[str] = Field(..., min_length=1, max_length=200)

@@ -101,6 +101,25 @@ python .\scripts\import_seoul_road_excavation.py
 
 적재된 파일 상태는 `/api/public-data/local-construction/status`에서 확인할 수 있습니다.
 
+## 모니터링 지점
+
+대시보드의 `모니터링 지점` 카드를 눌러 최대 10개 지점을 직접 등록할 수 있습니다.
+등록된 지점은 DB의 `monitoring_points`에 저장되며, 해제하기 전까지 화면 접속 시 자동으로 위험도를 갱신합니다.
+
+관련 설정:
+
+```env
+SINKHOLE_MONITORING_POINTS_MAX_COUNT=10
+SINKHOLE_MONITORING_POINTS_REFRESH_SECONDS=900
+```
+
+관련 API:
+
+- `GET /api/monitoring-points`
+- `POST /api/monitoring-points`
+- `POST /api/monitoring-points/refresh`
+- `DELETE /api/monitoring-points/{point_id}`
+
 ## 운영 원칙
 
 - 데모 seed 데이터는 사용하지 않습니다.

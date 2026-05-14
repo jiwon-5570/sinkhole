@@ -141,9 +141,20 @@ def _nearest_analyzed_region(latitude: float, longitude: float) -> dict[str, Any
                 f.environment_score,
                 f.construction_score
             FROM regions r
-            JOIN risk_analysis_result a
+            JOIN (
+                SELECT *
+                FROM (
+                    SELECT
+                        r.*,
+                        ROW_NUMBER() OVER (
+                            PARTITION BY r.region_id
+                            ORDER BY r.analysis_date DESC, r.id DESC
+                        ) AS latest_rank
+                    FROM risk_analysis_result r
+                )
+                WHERE latest_rank = 1
+            ) a
               ON a.region_id = r.region_id
-             AND a.analysis_date = (SELECT MAX(analysis_date) FROM risk_analysis_result)
             LEFT JOIN feature_dataset f
               ON f.region_id = r.region_id
              AND f.analysis_date = a.analysis_date

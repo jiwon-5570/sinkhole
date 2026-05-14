@@ -108,6 +108,8 @@ class Settings:
         "SINKHOLE_LOCAL_CONSTRUCTION_FILE_DIR",
         BASE_DIR / "data" / "raw" / "public" / "seoul_road_excavation",
     )
+    monitoring_points_max_count: int = _int_env("SINKHOLE_MONITORING_POINTS_MAX_COUNT", 10)
+    monitoring_points_refresh_seconds: int = _int_env("SINKHOLE_MONITORING_POINTS_REFRESH_SECONDS", 900)
     molit_borehole_api_enabled: bool = _bool_env("SINKHOLE_MOLIT_BOREHOLE_API_ENABLED", True)
     molit_borehole_api_url: str = os.getenv(
         "SINKHOLE_MOLIT_BOREHOLE_API_URL",

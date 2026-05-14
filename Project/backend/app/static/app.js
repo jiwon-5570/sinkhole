@@ -10,6 +10,7 @@ const state = {
   topRisk: [],
   reports: [],
   selectedReports: new Set(),
+  monitoringPoints: [],
   selectedRegionId: null,
   selectedRoadId: null,
   selectedRegionName: "",
@@ -627,8 +628,8 @@ function renderMetrics(summary = {}) {
   setText(el.averageRiskLabel, meta.label);
   setText(el.metricRegionCount, formatNumber(summary.region_count || state.regions.length || 0));
   setText(el.metricHighRisk, formatNumber(summary.high_risk_count || 0));
-  setText(el.metricMonitoring, formatNumber(summary.monitoring_point_count || 0));
-  setText(el.metricRecentCount, formatNumber(summary.recent_detection_count || 0));
+  setText(el.metricMonitoring, formatNumber(summary.monitoring_point_count ?? state.monitoringPoints.length ?? 0));
+  setText(el.metricRecentCount, formatNumber(Math.max(Number(summary.recent_detection_count || 0), recentMonitoringRows().length)));
   document.documentElement.style.setProperty("--risk", String(Math.max(0, Math.min(100, average || 0))));
   setText($("overviewWatchCount"), formatNumber(Math.max(0, Number(summary.region_count || 0) - Number(summary.high_risk_count || 0))));
   setText($("overviewWarnCount"), formatNumber(summary.high_risk_count || 0));
@@ -965,11 +966,63 @@ function regionPoint(region, extra = {}) {
   };
 }
 
+function monitoringPointRisk(point) {
+  const score = Number(point?.risk_score ?? 0);
+  return riskMeta(point?.risk_level, score);
+}
+
+function monitoringPointLabel(point) {
+  return point?.address || point?.name || `모니터링 지점 ${point?.id || ""}`.trim();
+}
+
+function monitoringPointMapPoint(point) {
+  const score = Number(point?.risk_score ?? 0);
+  const meta = monitoringPointRisk(point);
+  return {
+    label: point?.name || point?.address || `지점 ${point?.id || ""}`.trim(),
+    address: monitoringPointLabel(point),
+    latitude: Number(point?.latitude),
+    longitude: Number(point?.longitude),
+    score,
+    riskClass: riskFillClass(meta),
+  };
+}
+
 function highRiskRegionRows() {
   const rows = state.topRisk
     .filter((row) => Number(row.total_risk_score || 0) >= 60)
     .sort((a, b) => Number(b.total_risk_score || 0) - Number(a.total_risk_score || 0));
   return rows.length ? rows : state.topRisk.slice(0, 3);
+}
+
+function recentMonitoringRows() {
+  const cutoff = Date.now() - (24 * 60 * 60 * 1000);
+  return state.monitoringPoints
+    .filter((point) => point?.last_checked_at && point?.risk_score !== null && point?.risk_score !== undefined)
+    .filter((point) => {
+      const checkedAt = Date.parse(String(point.last_checked_at).replace(" ", "T"));
+      return !Number.isFinite(checkedAt) || checkedAt >= cutoff;
+    })
+    .map((point) => {
+      const score = Number(point.risk_score || 0);
+      const meta = monitoringPointRisk(point);
+      const title = point.name || point.address || `모니터링 지점 ${point.id || ""}`.trim();
+      return {
+        title,
+        address: point.address || title,
+        latitude: Number(point.latitude),
+        longitude: Number(point.longitude),
+        score,
+        time: point.last_checked_at,
+        type: "모니터링 지점",
+        status: point.last_error ? "갱신 오류" : `${meta.label} 위험도 갱신`,
+      };
+    });
+}
+
+function recentDetectionRows() {
+  if (RECENT_DETECTIONS.length) return RECENT_DETECTIONS;
+  return recentMonitoringRows();
 }
 
 function metricDetailPoints(kind) {
@@ -984,7 +1037,7 @@ function metricDetailPoints(kind) {
     }).filter(Boolean);
   }
   if (kind === "recentDetections") {
-    return RECENT_DETECTIONS.map((row) => ({
+    return recentDetectionRows().map((row) => ({
       label: row.title,
       address: row.address || nearestKnownRoadAddress(row.latitude, row.longitude),
       latitude: row.latitude,
@@ -992,6 +1045,9 @@ function metricDetailPoints(kind) {
       score: row.score,
       riskClass: riskFillClass(riskMeta("", row.score)),
     }));
+  }
+  if (kind === "monitoringPoints") {
+    return state.monitoringPoints.map(monitoringPointMapPoint).filter(Boolean);
   }
   return state.regions.map((region) => regionPoint(region)).filter(Boolean);
 }
@@ -1070,20 +1126,211 @@ function metricDetailMapHtml(points = []) {
   `;
 }
 
+function monitoringDetailListHtml() {
+  const count = state.monitoringPoints.length;
+  const disabled = count >= 10 ? "disabled" : "";
+  const rows = state.monitoringPoints.map((point) => {
+    const score = Number(point.risk_score || 0);
+    const meta = monitoringPointRisk(point);
+    const value = point.last_error
+      ? "갱신 오류"
+      : point.last_checked_at
+        ? `${formatNumber(score, 1)} ${meta.label}`
+        : "갱신 대기";
+    return `
+      <article class="metric-detail-row monitoring-point-row">
+        <div>
+          <strong>${escapeHtml(point.name || point.address || `모니터링 지점 ${point.id}`)}</strong>
+          <span>${escapeHtml(point.address || "-")}</span>
+          <small>${escapeHtml(point.last_error || (point.last_checked_at ? `마지막 갱신 ${point.last_checked_at}` : "자동 갱신 대기"))}</small>
+        </div>
+        <div class="monitoring-row-actions">
+          <b>${escapeHtml(value)}</b>
+          <button type="button" class="secondary" data-monitoring-remove="${escapeHtml(point.id)}">해제</button>
+        </div>
+      </article>
+    `;
+  }).join("");
+
+  return `
+    <div class="monitoring-point-controls">
+      <div class="monitoring-count">
+        <strong>${formatNumber(count)} / 10</strong>
+        <span>등록된 모니터링 지점</span>
+      </div>
+      <div class="monitoring-add-row">
+        <input id="monitoringPointInput" type="text" placeholder="예: 서울특별시 송파구 송파대로 167" ${disabled}>
+        <button id="monitoringPointAddButton" class="primary" type="button" ${disabled}>지점 추가</button>
+      </div>
+      <div class="monitoring-action-row">
+        <button id="monitoringCurrentButton" class="secondary" type="button" ${disabled}>현재 선택 위치 추가</button>
+        <button id="monitoringRefreshButton" class="secondary" type="button">전체 갱신</button>
+      </div>
+      ${count >= 10 ? `<p class="monitoring-note">최대 10개까지 등록할 수 있습니다. 새 지점을 추가하려면 기존 지점을 해제하세요.</p>` : ""}
+    </div>
+    <div class="monitoring-point-list">
+      ${rows || `<div class="empty-state">등록된 지점이 없습니다.</div>`}
+    </div>
+  `;
+}
+
+async function loadMonitoringPoints(options = {}) {
+  const shouldRefresh = Boolean(options.refresh);
+  const path = shouldRefresh
+    ? `/api/monitoring-points/refresh${options.force ? "?force=true" : ""}`
+    : "/api/monitoring-points";
+  const data = await api(path, {
+    method: shouldRefresh ? "POST" : "GET",
+    timeoutMs: shouldRefresh ? 45000 : 12000,
+  });
+  state.monitoringPoints = Array.isArray(data?.points) ? data.points : [];
+  setText(el.metricMonitoring, formatNumber(state.monitoringPoints.length));
+  return state.monitoringPoints;
+}
+
+async function refreshMonitoringDetail(options = {}) {
+  await loadMonitoringPoints({ refresh: true, force: Boolean(options.force) });
+  renderMetricDetail(buildMetricDetail("monitoringPoints", {
+    monitoring_point_count: state.monitoringPoints.length,
+  }));
+  await refreshSummaryPanels();
+}
+
+async function addMonitoringPoint(inputValue) {
+  const raw = String(inputValue || "").trim();
+  if (!raw) {
+    setStatus("모니터링할 도로명 주소를 입력해 주세요.");
+    return;
+  }
+  if (state.monitoringPoints.length >= 10) {
+    setStatus("모니터링 지점은 최대 10개까지 등록할 수 있습니다.");
+    return;
+  }
+  setStatus("모니터링 지점 위치를 확인하는 중입니다.");
+  const coordinates = parseCoordinates(raw);
+  const resolved = coordinates
+    ? {
+        ...coordinates,
+        address: await reverseGeocodeAddress(coordinates.latitude, coordinates.longitude),
+      }
+    : await geocodeLocationByAddress(raw);
+  const address = resolved.address || raw;
+  await api("/api/monitoring-points", {
+    method: "POST",
+    timeoutMs: 45000,
+    body: JSON.stringify({
+      name: address,
+      address,
+      latitude: Number(resolved.latitude),
+      longitude: Number(resolved.longitude),
+    }),
+  });
+  await refreshMonitoringDetail({ force: false });
+  setStatus(`모니터링 지점을 추가했습니다: ${address}`);
+}
+
+async function addCurrentMapTargetAsMonitoringPoint() {
+  const target = selectedMapTarget();
+  const latitude = Number(target?.latitude);
+  const longitude = Number(target?.longitude);
+  if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) {
+    setStatus("현재 추가할 수 있는 지도 위치가 없습니다.");
+    return;
+  }
+  const address = targetRoadAddress(target) || target.name || "선택 위치";
+  await api("/api/monitoring-points", {
+    method: "POST",
+    timeoutMs: 45000,
+    body: JSON.stringify({
+      name: address,
+      address,
+      latitude,
+      longitude,
+    }),
+  });
+  await refreshMonitoringDetail({ force: false });
+  setStatus(`현재 선택 위치를 모니터링 지점으로 추가했습니다: ${address}`);
+}
+
+function bindMonitoringDetailControls() {
+  $("monitoringPointAddButton")?.addEventListener("click", async () => {
+    const button = $("monitoringPointAddButton");
+    if (button) button.disabled = true;
+    try {
+      await addMonitoringPoint($("monitoringPointInput")?.value);
+    } catch (error) {
+      setStatus(error.message);
+    } finally {
+      if (button) button.disabled = state.monitoringPoints.length >= 10;
+    }
+  });
+  $("monitoringPointInput")?.addEventListener("keydown", async (event) => {
+    if (event.key !== "Enter") return;
+    event.preventDefault();
+    try {
+      await addMonitoringPoint(event.currentTarget.value);
+    } catch (error) {
+      setStatus(error.message);
+    }
+  });
+  $("monitoringCurrentButton")?.addEventListener("click", async () => {
+    try {
+      await addCurrentMapTargetAsMonitoringPoint();
+    } catch (error) {
+      setStatus(error.message);
+    }
+  });
+  $("monitoringRefreshButton")?.addEventListener("click", async () => {
+    const button = $("monitoringRefreshButton");
+    if (button) button.disabled = true;
+    setStatus("모니터링 지점을 갱신하는 중입니다.");
+    try {
+      await refreshMonitoringDetail({ force: true });
+      setStatus("모니터링 지점 갱신이 완료되었습니다.");
+    } catch (error) {
+      setStatus(error.message);
+    } finally {
+      if (button) button.disabled = false;
+    }
+  });
+  document.querySelectorAll("[data-monitoring-remove]").forEach((button) => {
+    button.addEventListener("click", async () => {
+      const pointId = button.getAttribute("data-monitoring-remove");
+      if (!pointId) return;
+      button.disabled = true;
+      try {
+        await api(`/api/monitoring-points/${encodeURIComponent(pointId)}`, {
+          method: "DELETE",
+          timeoutMs: 12000,
+        });
+        await refreshMonitoringDetail({ force: false });
+        setStatus("모니터링 지점을 해제했습니다.");
+      } catch (error) {
+        setStatus(error.message);
+      }
+    });
+  });
+}
+
 function renderMetricDetail(detail) {
   setText(el.metricDetailTitle, detail.title);
   setText(el.metricDetailSubtitle, detail.subtitle);
   if (el.metricDetailMap) el.metricDetailMap.innerHTML = metricDetailMapHtml(detail.points);
   if (el.metricDetailList) {
-    el.metricDetailList.innerHTML = detail.rows.map((row) => `
-      <article class="metric-detail-row">
-        <div>
-          <strong>${escapeHtml(row.title)}</strong>
-          <span>${escapeHtml(row.meta)}</span>
-        </div>
-        <b>${escapeHtml(row.value)}</b>
-      </article>
-    `).join("");
+    if (detail.kind === "monitoringPoints") {
+      el.metricDetailList.innerHTML = monitoringDetailListHtml();
+      bindMonitoringDetailControls();
+    } else {
+      el.metricDetailList.innerHTML = detail.rows.map((row) => `
+        <article class="metric-detail-row">
+          <div>
+            <strong>${escapeHtml(row.title)}</strong>
+            <span>${escapeHtml(row.meta)}</span>
+          </div>
+          <b>${escapeHtml(row.value)}</b>
+        </article>
+      `).join("");
+    }
   }
   if (el.metricDetailSummary) {
     el.metricDetailSummary.innerHTML = `
@@ -1181,55 +1428,75 @@ function buildMetricDetail(kind, payload = null) {
   }
 
   if (kind === "monitoringPoints") {
+    const count = state.monitoringPoints.length;
+    const checked = state.monitoringPoints.filter((point) => point.last_checked_at).length;
+    const errorCount = state.monitoringPoints.filter((point) => point.last_error).length;
     return {
+      kind,
       title: "모니터링 지점 상세",
-      subtitle: `${formatNumber(monitoringCount)}개 모니터링 지점이 실제 센서 원본 기준으로 집계됩니다.`,
+      subtitle: `${formatNumber(count)}개 지점을 등록했습니다. 최대 10개까지 직접 지정할 수 있고, 해제 전까지 접속 시 자동 갱신됩니다.`,
       points: metricDetailPoints(kind),
-      rows: [],
+      rows: state.monitoringPoints.map((point) => {
+        const score = Number(point.risk_score || 0);
+        const meta = monitoringPointRisk(point);
+        return {
+          title: point.name || point.address || `모니터링 지점 ${point.id}`,
+          meta: `${point.address || "-"} / ${point.last_checked_at ? `갱신 ${point.last_checked_at}` : "갱신 대기"}`,
+          value: point.last_error ? "오류" : `${formatNumber(score, 1)} ${meta.label}`,
+          id: point.id,
+        };
+      }),
       summaryTitle: "AI 모니터링 판단",
       summary: [
-        "현재 실제 센서 또는 현장 탐지 이벤트 데이터가 연동되지 않아 모니터링 지점은 0개로 표시합니다.",
-        "운영 단계에서는 센서/점검 장비 원본 데이터가 들어온 뒤에만 모니터링 지점 수를 집계해야 합니다.",
+        count
+          ? `${formatNumber(count)}개 지점 중 ${formatNumber(checked)}개가 최근 위험도 계산을 완료했습니다.${errorCount ? ` ${formatNumber(errorCount)}개 지점은 갱신 오류가 있습니다.` : ""}`
+          : "등록된 모니터링 지점이 없습니다. 주소를 입력해 지점을 추가하면 이후 접속 시 자동 갱신됩니다.",
+        "현재 모니터링은 사용자가 지정한 위치를 기준으로 근접 공공데이터 분석 지점과 최신 강우를 결합해 위험도를 갱신합니다.",
       ],
       actions: [
-        "센서 원본 테이블 또는 현장 점검 이벤트 API를 먼저 연동합니다.",
-        "데이터 출처, 수집 시각, 장비 ID가 확인된 이벤트만 운영 지표에 반영합니다.",
-        "연동 전에는 모니터링 수치를 임의로 채우지 않습니다.",
+        "위험도가 높은 지점은 현장 점검 또는 GPR 탐사 대상으로 지정합니다.",
+        "주소가 부정확한 지점은 해제 후 도로명 주소로 다시 등록합니다.",
+        "사용하지 않는 지점은 해제해 자동 갱신 대상에서 제외합니다.",
       ],
     };
   }
 
+  const recentRows = recentDetectionRows();
+  const hasSourceDetections = RECENT_DETECTIONS.length > 0;
+
   return {
     title: "최근 탐지 건수 상세",
-    subtitle: RECENT_DETECTIONS.length
-      ? `최근 24시간 기준 ${RECENT_DETECTIONS.length}건의 탐지 이벤트가 있습니다.`
-      : "현재 원본 데이터에 등록된 최근 탐지 이벤트가 없습니다.",
+    subtitle: recentRows.length
+      ? `최근 24시간 기준 ${recentRows.length}건의 탐지 또는 모니터링 갱신 이벤트가 있습니다.`
+      : "현재 원본 데이터 또는 모니터링 지점에 등록된 최근 이벤트가 없습니다.",
     points: metricDetailPoints(kind),
-    rows: RECENT_DETECTIONS.map((row) => ({
+    rows: recentRows.map((row) => ({
       title: row.title,
       meta: `${row.time} / ${row.type} / ${row.status}`,
       value: formatNumber(row.score, 0),
     })),
     summaryTitle: "AI 탐지 이벤트 판단",
-    summary: RECENT_DETECTIONS.length
+    summary: recentRows.length
       ? [
-          "최근 탐지 건수는 단기 위험 변화와 현장 대응 필요성을 보여주는 운영 지표입니다.",
-          "지반 침하, 지하수 변동, 미세 진동이 짧은 시간 안에 반복되면 점검 우선순위를 올려야 합니다.",
+          hasSourceDetections
+            ? "최근 탐지 건수는 단기 위험 변화와 현장 대응 필요성을 보여주는 운영 지표입니다."
+            : "원본 탐지 이벤트가 없을 때는 최근 갱신된 모니터링 지점을 운영 이벤트로 집계합니다.",
+          "위험도 계산이 최근 24시간 안에 완료된 지점은 대시보드 접속 때마다 자동 갱신 대상으로 관리됩니다.",
         ]
       : [
-          "실제 탐지 이벤트 원본 데이터가 없으므로 최근 탐지 건수는 0건으로 표시합니다.",
-          "임의 이벤트를 생성하지 않고, 원본 이벤트가 연동될 때만 목록과 점수를 갱신합니다.",
+          "실제 탐지 이벤트 원본 데이터와 최근 갱신된 모니터링 지점이 모두 없어 0건으로 표시합니다.",
+          "임의 이벤트를 생성하지 않고, 출처가 확인된 탐지 또는 사용자가 등록한 모니터링 갱신만 반영합니다.",
         ],
-    actions: RECENT_DETECTIONS.length
+    actions: recentRows.length
       ? [
-          "확인 필요 이벤트는 24시간 안에 현장 확인과 사진/도로명 주소 기록을 완료합니다.",
-          "동일 지역 반복 탐지는 원인 분석 카드와 연결해 위험 점수를 재산정합니다.",
+          "위험도가 높은 모니터링 지점은 현장 확인 또는 GPR 탐사 대상으로 지정합니다.",
+          "동일 주소에서 반복 갱신 또는 점수 상승이 발생하면 원인 분석 카드와 연결해 점수를 재산정합니다.",
           "오탐으로 확인된 이벤트는 모델 학습 데이터에 반영해 불필요한 경보를 줄입니다.",
         ]
       : [
           "탐지 센서, 현장 신고, 점검 이벤트 원본 API를 연동합니다.",
+          "모니터링 지점을 등록하면 접속 시 자동 갱신되어 최근 24시간 건수에 반영됩니다.",
           "출처와 수집 시각이 확인된 이벤트만 최근 탐지 목록에 표시합니다.",
-          "연동 전에는 탐지 건수와 알림 상태를 0 또는 데이터 없음으로 유지합니다.",
         ],
   };
 }
@@ -1249,6 +1516,13 @@ function closeMetricDialog() {
 }
 
 async function openMetricDetail(kind) {
+  if (kind === "monitoringPoints") {
+    try {
+      await loadMonitoringPoints({ refresh: true });
+    } catch (error) {
+      setStatus(error.message);
+    }
+  }
   const initialDetail = buildMetricDetail(kind);
   renderMetricDetail(initialDetail);
   openMetricDialog();
@@ -1554,6 +1828,7 @@ function startDashboardAutoRefresh() {
   dashboardRefreshTimer = window.setInterval(async () => {
     if (document.hidden) return;
     try {
+      await loadMonitoringPoints({ refresh: true });
       await refreshSummaryPanels();
     } catch (error) {
       console.warn("dashboard auto refresh failed", error);
@@ -2428,6 +2703,7 @@ async function bootstrap() {
   try {
     await loadRegions();
     await loadRoads();
+    await loadMonitoringPoints({ refresh: true, force: true }).catch((error) => console.warn("monitoring refresh failed", error));
     await refreshSummaryPanels();
     startDashboardAutoRefresh();
     setMode("scenario", { silent: true });
@@ -2531,7 +2807,7 @@ window.__sinkholeActions = {
   closeAiChat,
 };
 window.__sinkholeAppReady = true;
-window.__sinkholeAssetVersion = "20260510-stable-ui";
+window.__sinkholeAssetVersion = "20260514-detection-count";
 
 bootstrap().catch((error) => {
   console.error(error);

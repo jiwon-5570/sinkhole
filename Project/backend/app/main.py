@@ -26,6 +26,7 @@ from app.routes.commercial import router as commercial_router
 from app.routes.compare import router as compare_router
 from app.routes.health import router as health_router
 from app.routes.map import router as map_router
+from app.routes.monitoring import router as monitoring_router
 from app.routes.public_data import router as public_data_router
 from app.routes.regions import router as regions_router
 from app.routes.roads import router as roads_router
@@ -34,6 +35,11 @@ from app.routes.simulation import router as simulation_router
 from app.security import BasicAuthMiddleware
 from app.services.features import today_str
 from app.services.local_construction_importer import import_local_construction_files
+from app.services.monitoring_points import (
+    active_monitoring_count,
+    ensure_monitoring_table,
+    recent_monitoring_detection_count,
+)
 from app.services.public_data_collector import public_data_scheduler
 from app.services.real_data_targets import ensure_public_ground_regions
 
@@ -72,6 +78,7 @@ def initialize_app_data() -> None:
             raise RuntimeError("SINKHOLE_SEED_DEMO is disabled for real-data operation.")
 
         ensure_public_ground_regions(conn)
+        ensure_monitoring_table(conn)
 
         if settings.local_construction_file_import_enabled:
             import_local_construction_files(conn)
@@ -83,6 +90,19 @@ def initialize_app_data() -> None:
         conn.commit()
     finally:
         conn.close()
+
+
+def recent_detection_count(conn) -> int:
+    recent_sinkholes = query_one(
+        conn,
+        """
+        SELECT COUNT(*) AS count
+        FROM sinkhole_history
+        WHERE occurrence_date IS NOT NULL
+          AND date(occurrence_date) >= date('now', 'localtime', '-1 day')
+        """,
+    )
+    return int((recent_sinkholes or {}).get("count") or 0) + recent_monitoring_detection_count(conn)
 
 
 async def local_construction_file_scheduler(stop_event: asyncio.Event) -> None:
@@ -158,31 +178,33 @@ def create_app() -> FastAPI:
                         "high_risk_count": 0,
                         "very_high_risk_count": 0,
                         "average_risk_score": 0,
-                        "monitoring_point_count": 0,
-                        "recent_detection_count": 0,
+                        "monitoring_point_count": active_monitoring_count(conn),
+                        "recent_detection_count": recent_detection_count(conn),
                     },
                 }
 
             metrics = query_one(
                 conn,
                 """
+                WITH latest AS (
+                    SELECT *
+                    FROM (
+                        SELECT
+                            r.*,
+                            ROW_NUMBER() OVER (
+                                PARTITION BY r.region_id
+                                ORDER BY r.analysis_date DESC, r.id DESC
+                            ) AS latest_rank
+                        FROM risk_analysis_result r
+                    )
+                    WHERE latest_rank = 1
+                )
                 SELECT
                     COUNT(*) AS region_count,
                     COALESCE(SUM(CASE WHEN total_risk_score >= 60 THEN 1 ELSE 0 END), 0) AS high_risk_count,
                     COALESCE(SUM(CASE WHEN total_risk_score >= 80 THEN 1 ELSE 0 END), 0) AS very_high_risk_count,
                     COALESCE(AVG(total_risk_score), 0) AS average_risk_score
-                FROM risk_analysis_result
-                WHERE analysis_date = ?
-                """,
-                (analysis_date,),
-            )
-            recent_detection = query_one(
-                conn,
-                """
-                SELECT COUNT(*) AS count
-                FROM sinkhole_history
-                WHERE occurrence_date IS NOT NULL
-                  AND date(occurrence_date) >= date('now', '-1 day')
+                FROM latest
                 """,
             )
             return {
@@ -194,8 +216,8 @@ def create_app() -> FastAPI:
                     "high_risk_count": int(metrics["high_risk_count"]),
                     "very_high_risk_count": int(metrics["very_high_risk_count"]),
                     "average_risk_score": round(float(metrics["average_risk_score"]), 1),
-                    "monitoring_point_count": 0,
-                    "recent_detection_count": int((recent_detection or {}).get("count") or 0),
+                    "monitoring_point_count": active_monitoring_count(conn),
+                    "recent_detection_count": recent_detection_count(conn),
                 },
             }
         finally:
@@ -227,6 +249,7 @@ def create_app() -> FastAPI:
     api.include_router(regions_router)
     api.include_router(roads_router)
     api.include_router(map_router)
+    api.include_router(monitoring_router)
     api.include_router(public_data_router)
     api.include_router(analysis_router)
     api.include_router(chat_router)
