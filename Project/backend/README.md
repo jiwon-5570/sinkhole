@@ -73,6 +73,34 @@ python .\scripts\import_molit_ground_data.py
 
 적재 후 위치 주변 지층 데이터가 있으면 분석 점수의 `환경` 요인에 지반 보정값으로 반영됩니다.
 
+## 서울시 도로굴착 공사 파일 적재
+
+서울시 도로굴착 공사 정보 파일은 아래 폴더에 넣습니다.
+
+```text
+data/raw/public/seoul_road_excavation/
+```
+
+지원 형식은 `.csv`, `.tsv`, `.txt`, `.xlsx`, `.xls`입니다. 서버는 기본 30초마다 이 폴더를 스캔하고,
+새 파일 또는 수정된 파일을 발견하면 `construction_events`에 적재한 뒤 오늘 날짜 위험도 점수를 다시 계산합니다.
+
+권장 컬럼은 다음과 같습니다.
+
+- 공사명 또는 공사종류
+- 도로명주소 또는 공사위치
+- 시작일/착공일
+- 종료일/준공일
+- 굴착연장, 굴착깊이, 굴착폭, 굴착면적
+- 위도/경도
+
+수동 적재가 필요하면 다음 명령을 실행합니다.
+
+```powershell
+python .\scripts\import_seoul_road_excavation.py
+```
+
+적재된 파일 상태는 `/api/public-data/local-construction/status`에서 확인할 수 있습니다.
+
 ## 운영 원칙
 
 - 데모 seed 데이터는 사용하지 않습니다.

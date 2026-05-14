@@ -17,6 +17,37 @@ from app.utils.response import fail, ok
 router = APIRouter()
 
 
+def _append_coverage_card(payload: dict) -> None:
+    coverage = payload.get("data_coverage") or {}
+    reference = coverage.get("reference_region") or {}
+    distance_m = coverage.get("distance_m")
+    distance_text = f"{float(distance_m) / 1000:.1f}km" if distance_m is not None else "-"
+    if reference:
+        body = (
+            f"선택 좌표는 저장 분석 지점 '{reference.get('region_name')}'에서 약 {distance_text} 떨어져 있습니다. "
+            f"{coverage.get('message') or ''} 이 값은 좌표별 독립 정밀조사 결과가 아니라 공공데이터가 매칭된 근접 지점 기반 추정입니다."
+        )
+    else:
+        body = (
+            f"{coverage.get('message') or '선택 좌표 주변에 저장 분석 지점이 없습니다.'} "
+            "따라서 현재 점수는 강우 등 즉시 확인 가능한 항목만 반영한 값이며, 정밀 위험도로 해석하면 안 됩니다."
+        )
+    cards = list(payload.get("reason_cards") or [])
+    cards.insert(
+        0,
+        {
+            "title": "데이터 적용 범위",
+            "badge": coverage.get("label") or "확인 필요",
+            "body": body.strip(),
+            "meta": [
+                {"label": "참조거리", "value": distance_text},
+                {"label": "계산방식", "value": coverage.get("label") or "-"},
+            ],
+        },
+    )
+    payload["reason_cards"] = cards
+
+
 def _file_meta(path: Path) -> dict:
     stat = path.stat()
     return {
@@ -113,6 +144,7 @@ def commercial_analyze(req: CommercialAnalyzeRequest) -> dict:
             features=payload.get("features"),
             weather=payload.get("weather"),
         )
+        _append_coverage_card(payload)
     except Exception as exc:
         return fail(str(exc), "COMMERCIAL_ANALYZE_FAILED")
     return ok(payload)
@@ -134,6 +166,7 @@ def commercial_report(req: CommercialReportRequest) -> dict:
             features=payload.get("features"),
             weather=payload.get("weather"),
         )
+        _append_coverage_card(payload)
         report = build_commercial_report(payload)
         pdf = _write_commercial_pdf(payload, report, language=req.language or "ko")
     except Exception as exc:

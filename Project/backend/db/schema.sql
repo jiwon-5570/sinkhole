@@ -50,6 +50,12 @@ CREATE TABLE IF NOT EXISTS gpr_inspection (
     cavity_detected INTEGER,
     cavity_count INTEGER,
     depth_estimate REAL,
+    source_name TEXT,
+    source_record_id TEXT,
+    inspection_method TEXT,
+    address TEXT,
+    latitude REAL,
+    longitude REAL,
     FOREIGN KEY (region_id) REFERENCES regions(region_id)
 );
 
@@ -238,7 +244,40 @@ CREATE TABLE IF NOT EXISTS groundwater_data (
     variation REAL,
     source_name TEXT,
     source_record_id TEXT,
+    station_id TEXT,
+    station_name TEXT,
     FOREIGN KEY (region_id) REFERENCES regions(region_id)
+);
+
+CREATE TABLE IF NOT EXISTS seoul_groundwater_observations (
+    id INTEGER PRIMARY KEY,
+    region_id INTEGER,
+    station_id TEXT,
+    station_name TEXT,
+    observed_at TEXT,
+    groundwater_level REAL,
+    water_temperature REAL,
+    electrical_conductivity REAL,
+    source_name TEXT,
+    source_record_id TEXT,
+    raw_json TEXT,
+    FOREIGN KEY (region_id) REFERENCES regions(region_id),
+    UNIQUE(source_name, source_record_id)
+);
+
+CREATE TABLE IF NOT EXISTS seoul_sewer_levels (
+    id INTEGER PRIMARY KEY,
+    region_id INTEGER,
+    station_id TEXT,
+    station_name TEXT,
+    observed_at TEXT,
+    sewer_level REAL,
+    communication_status TEXT,
+    source_name TEXT,
+    source_record_id TEXT,
+    raw_json TEXT,
+    FOREIGN KEY (region_id) REFERENCES regions(region_id),
+    UNIQUE(source_name, source_record_id)
 );
 
 CREATE TABLE IF NOT EXISTS environment_features (
@@ -262,6 +301,18 @@ CREATE TABLE IF NOT EXISTS construction_events (
     latitude REAL,
     longitude REAL,
     FOREIGN KEY (region_id) REFERENCES regions(region_id)
+);
+
+CREATE TABLE IF NOT EXISTS local_file_import_state (
+    source_file TEXT PRIMARY KEY,
+    source_name TEXT NOT NULL,
+    file_mtime REAL NOT NULL,
+    file_size INTEGER NOT NULL,
+    imported_at TEXT NOT NULL,
+    imported_rows INTEGER NOT NULL DEFAULT 0,
+    skipped_rows INTEGER NOT NULL DEFAULT 0,
+    status TEXT NOT NULL,
+    message TEXT
 );
 
 CREATE TABLE IF NOT EXISTS molit_ground_boreholes (
@@ -310,6 +361,27 @@ CREATE TABLE IF NOT EXISTS molit_ground_layers (
     UNIQUE(source_file, source_row_number)
 );
 
+CREATE TABLE IF NOT EXISTS molit_aggregate_geophysics (
+    id INTEGER PRIMARY KEY,
+    region_id INTEGER,
+    source_record_id TEXT,
+    survey_area_id TEXT,
+    address TEXT,
+    start_latitude REAL,
+    start_longitude REAL,
+    end_latitude REAL,
+    end_longitude REAL,
+    center_latitude REAL,
+    center_longitude REAL,
+    survey_method TEXT,
+    survey_point_name TEXT,
+    survey_length_m REAL,
+    source_name TEXT,
+    raw_json TEXT,
+    FOREIGN KEY (region_id) REFERENCES regions(region_id),
+    UNIQUE(source_name, source_record_id)
+);
+
 CREATE TABLE IF NOT EXISTS feature_dataset (
     region_id INTEGER,
     analysis_date TEXT,
@@ -354,3 +426,5 @@ CREATE INDEX IF NOT EXISTS idx_molit_ground_boreholes_coord ON molit_ground_bore
 CREATE INDEX IF NOT EXISTS idx_molit_ground_boreholes_source_record ON molit_ground_boreholes(source_name, source_record_id);
 CREATE INDEX IF NOT EXISTS idx_molit_ground_layers_code ON molit_ground_layers(borehole_code);
 CREATE INDEX IF NOT EXISTS idx_molit_ground_layers_coord ON molit_ground_layers(latitude, longitude);
+CREATE INDEX IF NOT EXISTS idx_seoul_groundwater_region_date ON seoul_groundwater_observations(region_id, observed_at);
+CREATE INDEX IF NOT EXISTS idx_seoul_sewer_levels_region_date ON seoul_sewer_levels(region_id, observed_at);

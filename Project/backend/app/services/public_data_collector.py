@@ -19,6 +19,8 @@ import requests
 from app.config.settings import settings
 from app.db.core import connect, query_all, query_one
 from app.services.features import today_str
+from app.services.local_construction_importer import SOURCE_NAME as LOCAL_CONSTRUCTION_SOURCE_NAME
+from app.services.seoul_open_data_collector import collect_seoul_open_data_once
 
 
 LOGGER = logging.getLogger(__name__)
@@ -81,6 +83,20 @@ APPROVED_SOURCES = (
         scope="global",
         normalizer="weather",
         max_rows_per_page=999,
+    ),
+    *(
+        (
+            PublicDataSource(
+                name="molit_aggregate_geophysics",
+                label="MOLIT aggregate resource geophysical survey",
+                url=settings.molit_aggregate_geophysics_url,
+                scope="global",
+                normalizer="geophysics",
+                max_rows_per_page=1000,
+            ),
+        )
+        if settings.molit_aggregate_geophysics_enabled
+        else ()
     ),
     *(
         (
@@ -155,19 +171,33 @@ _FACILITY_RISK_TERMS = (
 )
 
 _BUILDING_PERMIT_TARGETS: dict[int, tuple[str, str]] = {
-    101: ("48170", "13100"),  # Jinju-si Gajwa-dong
-    102: ("48170", "13100"),  # Jinju Station area
-    103: ("48170", "13700"),  # Jinju Innovation City, Chungmugong-dong
-    104: ("48170", "12900"),  # Jinyangho entrance, Panmun-dong
-    105: ("48240", "25000"),  # Sacheon Airport area, Sacheon-eup
+    900001: ("11740", "10300"),  # Seoul Gangdong-gu Gil-dong
+    900002: ("11680", "10100"),  # Seoul Gangnam-gu Yeoksam-dong
+    900003: ("11710", "10800"),  # Seoul Songpa-gu Munjeong-dong
+    900004: ("11710", "10100"),  # Seoul Songpa-gu Jamsil-dong
+    900005: ("11710", "10700"),  # Seoul Songpa-gu Garak-dong
+    900006: ("11500", "11500"),  # Seoul Gangseo-gu Magok-dong
+    900007: ("11560", "11800"),  # Seoul Yeongdeungpo-gu Yeouido-dong
+    900008: ("11650", "10100"),  # Seoul Seocho-gu Bangbae-dong
+    900009: ("11200", "11500"),  # Seoul Seongdong-gu Seongsu-dong
+    900010: ("11440", "12700"),  # Seoul Mapo-gu Sangam-dong
+    900011: ("11170", "12900"),  # Seoul Yongsan-gu Hangangno-dong
+    900012: ("11530", "10200"),  # Seoul Guro-gu Guro-dong
 }
 
 _REGION_DONG_HINTS: dict[int, tuple[str, ...]] = {
-    101: ("가좌동",),
-    102: ("가좌동", "호탄동"),
-    103: ("충무공동",),
-    104: ("판문동", "평거동"),
-    105: ("사천읍",),
+    900001: ("강동구", "길동", "고덕", "상일", "천호", "강일", "하남", "미사"),
+    900002: ("강남구", "논현동", "역삼", "삼성", "대치", "청담", "수서"),
+    900003: ("송파구", "복정", "성남", "수정구", "단대동", "위례"),
+    900004: ("송파구", "잠실", "석촌", "방이", "광진", "세종대학교"),
+    900005: ("송파구", "문정", "가락", "장지", "거여", "마천", "위례"),
+    900006: ("강서구", "마곡", "김포공항", "공항동", "화곡", "가양", "등촌"),
+    900007: ("영등포구", "마포", "여의도", "문래", "당산", "영등포"),
+    900008: ("서초구", "방배", "반포", "서초", "양재", "서리풀"),
+    900009: ("성동구", "성수", "서울숲", "왕십리", "용두동", "동대문"),
+    900010: ("마포구", "상암", "서대문", "창천", "신촌", "목동"),
+    900011: ("용산구", "중구", "남대문", "양동", "서린", "공평", "관수", "나진상가", "이태원", "흑석"),
+    900012: ("구로구", "금천", "광명", "구로", "가산"),
 }
 
 
@@ -313,6 +343,40 @@ def _ensure_normalized_table_columns(conn: sqlite3.Connection) -> None:
     }.items():
         _ensure_column(conn, "molit_ground_boreholes", column_name, column_type)
 
+    conn.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS molit_aggregate_geophysics (
+            id INTEGER PRIMARY KEY,
+            region_id INTEGER,
+            source_record_id TEXT,
+            survey_area_id TEXT,
+            address TEXT,
+            start_latitude REAL,
+            start_longitude REAL,
+            end_latitude REAL,
+            end_longitude REAL,
+            center_latitude REAL,
+            center_longitude REAL,
+            survey_method TEXT,
+            survey_point_name TEXT,
+            survey_length_m REAL,
+            source_name TEXT,
+            raw_json TEXT,
+            FOREIGN KEY (region_id) REFERENCES regions(region_id),
+            UNIQUE(source_name, source_record_id)
+        );
+        """
+    )
+    for column_name, column_type in {
+        "source_name": "TEXT",
+        "source_record_id": "TEXT",
+        "inspection_method": "TEXT",
+        "address": "TEXT",
+        "latitude": "REAL",
+        "longitude": "REAL",
+    }.items():
+        _ensure_column(conn, "gpr_inspection", column_name, column_type)
+
 
 def _stable_json(value: Any) -> str:
     return json.dumps(value, ensure_ascii=False, sort_keys=True, default=str)
@@ -447,6 +511,8 @@ def _csv_values(value: str | None) -> list[str]:
 def _source_rows(source: PublicDataSource) -> int:
     if source.name == "molit_ground_boreholes":
         return min(max(1, int(settings.molit_borehole_rows_per_page)), source.max_rows_per_page)
+    if source.name == "molit_aggregate_geophysics":
+        return min(max(1, int(settings.molit_aggregate_geophysics_rows_per_page)), source.max_rows_per_page)
     if source.name == "mois_safemap_old_buildings":
         return min(max(1, int(settings.safemap_old_building_rows_per_page)), source.max_rows_per_page)
     if source.name == "ground_subsidence_accident":
@@ -497,6 +563,12 @@ def _source_params(source: PublicDataSource, page_no: int, region: dict[str, Any
             "perPage": _source_rows(source),
             "returnType": "JSON",
         }
+    if source.name == "molit_aggregate_geophysics":
+        return {
+            "page": page_no,
+            "perPage": _source_rows(source),
+            "returnType": "JSON",
+        }
     if source.name == "mois_safemap_old_buildings":
         return {
             "numOfRows": rows,
@@ -537,6 +609,8 @@ def _source_params(source: PublicDataSource, page_no: int, region: dict[str, Any
 def _source_max_pages(source: PublicDataSource) -> int:
     if source.name == "molit_ground_boreholes":
         return max(1, int(settings.molit_borehole_max_pages))
+    if source.name == "molit_aggregate_geophysics":
+        return max(1, int(settings.molit_aggregate_geophysics_max_pages))
     if source.name == "mois_safemap_old_buildings":
         return max(1, int(settings.safemap_old_building_max_pages))
     return max(1, int(settings.public_data_max_pages))
@@ -554,7 +628,7 @@ def _fetch_page(
     for url in _candidate_urls(source.url):
         key_names = (
             ("serviceKey", "ServiceKey")
-            if source.name in {"molit_ground_boreholes", "mois_safemap_old_buildings"}
+            if source.name in {"molit_ground_boreholes", "molit_aggregate_geophysics", "mois_safemap_old_buildings"}
             else ("ServiceKey", "serviceKey")
         )
         for key_name in key_names:
@@ -714,7 +788,7 @@ def _first_text(item: dict[str, Any], keys: tuple[str, ...], default: str = "") 
 
 def _item_record_id(item: dict[str, Any]) -> str | None:
     parts = [
-        _first_text(item, ("no", "No", "시추공코드"), ""),
+        _first_text(item, ("no", "No", "시추공코드", "물리탐사일련번호"), ""),
         _first_text(item, ("facilNo", "arNo", "evalNo", "accdntNo", "sagoNo", "sogoNo", "mgmPmsrgstPk"), ""),
         _first_text(item, ("chckDignSeq", "facilNm", "evalNm", "accdntNm", "accdntYmd", "tm", "archPmsDay"), ""),
     ]
@@ -723,7 +797,7 @@ def _item_record_id(item: dict[str, Any]) -> str | None:
 
 
 def _item_address(item: dict[str, Any]) -> str:
-    return _first_text(item, ("facilAddr", "addr", "address", "roadAddr", "jibunAddr", "platPlc"), "")
+    return _first_text(item, ("facilAddr", "addr", "address", "roadAddr", "jibunAddr", "platPlc", "주소"), "")
 
 
 def _item_name(item: dict[str, Any]) -> str:
@@ -1297,6 +1371,105 @@ def _insert_old_building_status(conn: sqlite3.Connection, region_id: int, item: 
     return True
 
 
+def _geophysics_float(item: dict[str, Any], keys: tuple[str, ...]) -> float | None:
+    for key in keys:
+        value = _optional_float(_first_text(item, (key,), ""))
+        if value is not None:
+            return value
+    return None
+
+
+def _geophysics_center(item: dict[str, Any]) -> tuple[float | None, float | None, float | None, float | None, float | None, float | None]:
+    start_lat = _geophysics_float(item, ("기점위도", "startLatitude", "startLat"))
+    start_lon = _geophysics_float(item, ("기점경도", "startLongitude", "startLon", "startLng"))
+    end_lat = _geophysics_float(item, ("종점위도", "endLatitude", "endLat"))
+    end_lon = _geophysics_float(item, ("종점경도", "endLongitude", "endLon", "endLng"))
+    center_lat = None
+    center_lon = None
+    if start_lat is not None and end_lat is not None:
+        center_lat = (start_lat + end_lat) / 2.0
+    elif start_lat is not None:
+        center_lat = start_lat
+    if start_lon is not None and end_lon is not None:
+        center_lon = (start_lon + end_lon) / 2.0
+    elif start_lon is not None:
+        center_lon = start_lon
+    return start_lat, start_lon, end_lat, end_lon, center_lat, center_lon
+
+
+def _resolve_geophysics_region(item: dict[str, Any], regions: list[dict[str, Any]]) -> dict[str, Any] | None:
+    _, _, _, _, lat, lon = _geophysics_center(item)
+    address = _item_address(item)
+    candidates = [region for region in regions if address and region.get("sigungu") and str(region["sigungu"]) in address]
+    if not candidates:
+        candidates = list(regions)
+    if lat is None or lon is None or not candidates:
+        return _resolve_region_by_dong_hint(item, regions)
+    nearest = min(
+        candidates,
+        key=lambda region: _distance_m(float(lat), float(lon), float(region["latitude"]), float(region["longitude"])),
+    )
+    distance = _distance_m(float(lat), float(lon), float(nearest["latitude"]), float(nearest["longitude"]))
+    if distance <= float(settings.public_data_match_radius_m):
+        return nearest
+    return None
+
+
+def _insert_aggregate_geophysics(
+    conn: sqlite3.Connection,
+    item: dict[str, Any],
+    regions: list[dict[str, Any]],
+    source_name: str,
+) -> bool:
+    source_record_id = _item_record_id(item)
+    if not source_record_id:
+        return False
+    start_lat, start_lon, end_lat, end_lon, center_lat, center_lon = _geophysics_center(item)
+    target_region = _resolve_geophysics_region(item, regions)
+    method = _first_text(item, ("탐사방법", "surveyMethod"), "물리탐사")
+    existing = query_one(
+        conn,
+        """
+        SELECT id
+        FROM molit_aggregate_geophysics
+        WHERE source_name = ? AND source_record_id = ?
+        LIMIT 1
+        """,
+        (source_name, source_record_id),
+    )
+    if existing:
+        return False
+    conn.execute(
+        """
+        INSERT INTO molit_aggregate_geophysics(
+            region_id, source_record_id, survey_area_id, address,
+            start_latitude, start_longitude, end_latitude, end_longitude,
+            center_latitude, center_longitude, survey_method, survey_point_name,
+            survey_length_m, source_name, raw_json
+        )
+        VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            int(target_region["region_id"]) if target_region else None,
+            source_record_id,
+            _first_text(item, ("조사지역일련번호", "surveyAreaId"), ""),
+            _item_address(item),
+            start_lat,
+            start_lon,
+            end_lat,
+            end_lon,
+            center_lat,
+            center_lon,
+            method,
+            _first_text(item, ("물리탐사지점명", "surveyPointName"), ""),
+            _safe_float(_first_text(item, ("물리탐사길이(미터)", "surveyLengthM"), ""), 0.0),
+            source_name,
+            _stable_json(item),
+        ),
+    )
+    return True
+
+
 def _insert_sinkhole_history(conn: sqlite3.Connection, region_id: int, item: dict[str, Any], source_name: str) -> bool:
     text = _item_text(item)
     if source_name != "ground_subsidence_accident" and not _contains_any(text, _SINKHOLE_TERMS):
@@ -1772,8 +1945,11 @@ def _normalize_one_item(
             changed = _insert_old_building_status(conn, int(region["region_id"]), item, source.name) or changed
         return changed
 
+    if source.normalizer == "geophysics":
+        return _insert_aggregate_geophysics(conn, item, regions, source.name)
+
     target_region = _resolve_item_region(item, regions)
-    if not target_region and source.normalizer == "accident":
+    if not target_region and source.normalizer in {"accident", "underground"}:
         target_region = _resolve_region_by_dong_hint(item, regions)
     if not target_region:
         return False
@@ -1833,9 +2009,14 @@ def _clear_rebuilt_public_tables(conn: sqlite3.Connection) -> None:
     conn.execute("DELETE FROM facility_status")
     conn.execute("DELETE FROM underground_safety")
     conn.execute("DELETE FROM sinkhole_history WHERE source_name IS NOT NULL")
+    conn.execute("DELETE FROM gpr_inspection WHERE source_name IS NOT NULL")
     conn.execute("DELETE FROM weather_data WHERE source_name IS NOT NULL")
-    conn.execute("DELETE FROM construction_events WHERE source_name IS NOT NULL")
+    conn.execute(
+        "DELETE FROM construction_events WHERE source_name IS NOT NULL AND source_name != ?",
+        (LOCAL_CONSTRUCTION_SOURCE_NAME,),
+    )
     conn.execute("DELETE FROM molit_ground_boreholes WHERE source_name = 'molit_ground_boreholes'")
+    conn.execute("DELETE FROM molit_aggregate_geophysics WHERE source_name = 'molit_aggregate_geophysics'")
 
 
 def _renormalize_raw_records(conn: sqlite3.Connection, regions: list[dict[str, Any]]) -> int:
@@ -2029,8 +2210,8 @@ def collect_public_data_once() -> dict[str, Any]:
         conn.commit()
 
         default_api_key = settings.public_data_api_key or settings.safemap_api_key
-        if not default_api_key:
-            raise RuntimeError("PUBLIC_DATA_API_KEY or SAFEMAP_API_KEY is not set")
+        if not default_api_key and not settings.seoul_open_data_api_key:
+            raise RuntimeError("PUBLIC_DATA_API_KEY, SAFEMAP_API_KEY, or SEOUL_OPEN_DATA_API_KEY is not set")
 
         regions = query_all(
             conn,
@@ -2041,24 +2222,52 @@ def collect_public_data_once() -> dict[str, Any]:
             """,
         )
 
-        for source in APPROVED_SOURCES:
-            if source.name != "mois_safemap_old_buildings" and not settings.public_data_api_key:
-                continue
-            result = _collect_source(conn, source, default_api_key, regions, started_at)
-            source_results.append(result)
-            if any(_is_network_wide_error(error) for error in result["errors"]):
-                break
+        if default_api_key:
+            for source in APPROVED_SOURCES:
+                if source.name != "mois_safemap_old_buildings" and not settings.public_data_api_key:
+                    continue
+                result = _collect_source(conn, source, default_api_key, regions, started_at)
+                source_results.append(result)
+                if any(_is_network_wide_error(error) for error in result["errors"]):
+                    break
+
+        _clear_rebuilt_public_tables(conn)
+        raw_normalized_count = _renormalize_raw_records(conn, regions)
+
+        seoul_result = collect_seoul_open_data_once(conn)
+        if seoul_result.get("sources"):
+            source_results.append(
+                {
+                    "source": "seoul_open_data",
+                    "label": "Seoul Open Data bundle",
+                    "success": all(bool(row.get("success")) for row in seoul_result.get("sources", [])),
+                    "fetched_count": sum(int(row.get("fetched_count", 0)) for row in seoul_result.get("sources", [])),
+                    "saved_count": 0,
+                    "normalized_count": sum(int(row.get("normalized_count", 0)) for row in seoul_result.get("sources", [])),
+                    "errors": [
+                        f"{row.get('source')}: {row.get('error')}"
+                        for row in seoul_result.get("sources", [])
+                        if row.get("error")
+                    ],
+                    "details": seoul_result,
+                }
+            )
 
         fetched_count = sum(int(result["fetched_count"]) for result in source_results)
         saved_count = sum(int(result["saved_count"]) for result in source_results)
-        _clear_rebuilt_public_tables(conn)
-        normalized_count = _renormalize_raw_records(conn, regions)
+        normalized_count = raw_normalized_count + sum(
+            int(result.get("normalized_count", 0))
+            for result in source_results
+            if result.get("source") == "seoul_open_data"
+        )
         errors = [
             f"{result['source']}: {'; '.join(result['errors'])}"
             for result in source_results
             if result["errors"]
         ]
 
+        conn.execute("DELETE FROM feature_dataset WHERE analysis_date = ?", (today_str(),))
+        conn.execute("DELETE FROM road_feature_dataset WHERE analysis_date = ?", (today_str(),))
         _rebuild_today_analysis(conn)
         finished_at = _now()
         success = 1 if (not errors or fetched_count > 0 or normalized_count > 0) else 0

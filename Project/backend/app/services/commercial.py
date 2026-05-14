@@ -2,18 +2,22 @@ from __future__ import annotations
 
 import re
 from dataclasses import asdict, dataclass
-from statistics import mean, pstdev
+from math import asin, cos, radians, sin, sqrt
+from statistics import mean
 from typing import Any
 
 import requests
 
 from app.config.settings import settings
+from app.db.core import connect, query_all
 from app.services.addressing import nearest_road_address
-from app.services.risk_scoring import RiskBreakdown, clamp, risk_level
+from app.services.risk_scoring import clamp, risk_level, score_rule_based
 
 
 USER_AGENT = "sinkhole-demo/0.1"
 COORDINATE_PAIR_RE = re.compile(r"(^|[^\d.-])-?\d{1,3}(?:\.\d+)?\s*,\s*-?\d{1,3}(?:\.\d+)?($|[^\d.])")
+FULL_COVERAGE_RADIUS_M = 1500.0
+MAX_PROXY_RADIUS_M = 8000.0
 
 
 @dataclass(frozen=True)
@@ -104,10 +108,93 @@ def _fetch_weather(latitude: float, longitude: float) -> dict[str, Any]:
     }
 
 
-def _coordinate_environment_score(latitude: float, longitude: float) -> float:
-    lat_component = abs(latitude - round(latitude)) * 10
-    lon_component = abs(longitude - round(longitude)) * 10
-    return clamp((lat_component + lon_component) / 3, 0, 6)
+def _distance_m(lat1: float, lng1: float, lat2: float, lng2: float) -> float:
+    radius_m = 6_371_000.0
+    d_lat = radians(lat2 - lat1)
+    d_lng = radians(lng2 - lng1)
+    a = sin(d_lat / 2) ** 2 + cos(radians(lat1)) * cos(radians(lat2)) * sin(d_lng / 2) ** 2
+    return radius_m * 2 * asin(sqrt(a))
+
+
+def _nearest_analyzed_region(latitude: float, longitude: float) -> dict[str, Any] | None:
+    conn = connect(settings.db_path)
+    try:
+        rows = query_all(
+            conn,
+            """
+            SELECT
+                r.region_id,
+                r.region_name,
+                r.sido,
+                r.sigungu,
+                r.latitude,
+                r.longitude,
+                a.analysis_date,
+                a.total_risk_score,
+                a.risk_level,
+                a.priority_rank,
+                f.past_sinkhole_count,
+                f.gpr_detected_count,
+                f.facility_aging_score,
+                f.rainfall_score,
+                f.groundwater_score,
+                f.environment_score,
+                f.construction_score
+            FROM regions r
+            JOIN risk_analysis_result a
+              ON a.region_id = r.region_id
+             AND a.analysis_date = (SELECT MAX(analysis_date) FROM risk_analysis_result)
+            LEFT JOIN feature_dataset f
+              ON f.region_id = r.region_id
+             AND f.analysis_date = a.analysis_date
+            WHERE r.latitude IS NOT NULL
+              AND r.longitude IS NOT NULL
+            """,
+        )
+    finally:
+        conn.close()
+
+    nearest: dict[str, Any] | None = None
+    nearest_distance = float("inf")
+    for row in rows:
+        distance = _distance_m(latitude, longitude, float(row["latitude"]), float(row["longitude"]))
+        if distance < nearest_distance:
+            nearest = dict(row)
+            nearest["distance_m"] = distance
+            nearest_distance = distance
+    return nearest
+
+
+def _coverage(distance_m: float | None) -> dict[str, Any]:
+    if distance_m is None:
+        return {
+            "status": "insufficient",
+            "label": "데이터 부족",
+            "factor": 0.0,
+            "message": "해당 좌표 주변에 비교할 수 있는 저장 분석 지점이 없습니다.",
+        }
+    if distance_m <= FULL_COVERAGE_RADIUS_M:
+        return {
+            "status": "near",
+            "label": "근접 분석",
+            "factor": 1.0,
+            "message": "가까운 저장 분석 지점의 실제 공공데이터 기반 점수를 참조했습니다.",
+        }
+    if distance_m <= MAX_PROXY_RADIUS_M:
+        span = MAX_PROXY_RADIUS_M - FULL_COVERAGE_RADIUS_M
+        factor = 1.0 - ((distance_m - FULL_COVERAGE_RADIUS_M) / span) * 0.45
+        return {
+            "status": "proxy",
+            "label": "근접 지점 보정",
+            "factor": clamp(factor, 0.55, 1.0),
+            "message": "선택 좌표 자체의 정밀 원천자료가 없어 가장 가까운 저장 분석 지점을 거리 보정해 추정했습니다.",
+        }
+    return {
+        "status": "insufficient",
+        "label": "데이터 부족",
+        "factor": 0.0,
+        "message": "선택 좌표가 저장 분석 지점에서 너무 멀어 강우 외 항목을 신뢰 있게 추정하지 않았습니다.",
+    }
 
 
 def build_commercial_analysis(location_name: str | None, latitude: float | None, longitude: float | None) -> dict[str, Any]:
@@ -117,25 +204,49 @@ def build_commercial_analysis(location_name: str | None, latitude: float | None,
     precipitation = weather["precipitation"]
     rainfall_sum = sum(precipitation)
     rainfall_score = clamp(rainfall_sum / 8.0, 0, 10)
-    rainfall_volatility = pstdev(precipitation) if len(precipitation) > 1 else 0.0
-    # 실제 원본 데이터가 없는 항목은 임의 기본점수를 넣지 않는다.
-    groundwater_score = 0.0
-    facility_score = 0.0
-    environment_score = 0.0
-    past_sinkhole_score = 0.0
-    gpr_score = 0.0
-    construction_score = 0.0
+    nearest_region = _nearest_analyzed_region(location.latitude, location.longitude)
+    distance_m = float(nearest_region["distance_m"]) if nearest_region else None
+    coverage = _coverage(distance_m)
 
-    breakdown = RiskBreakdown(
-        past_sinkhole=past_sinkhole_score,
-        gpr=gpr_score,
-        facility=facility_score,
-        rainfall=rainfall_score,
-        groundwater=groundwater_score,
-        environment=environment_score,
-        construction=construction_score,
-    )
-    score = clamp(breakdown.total)
+    features = {
+        "past_sinkhole_count": 0.0,
+        "gpr_detected_count": 0.0,
+        "facility_aging_score": 0.0,
+        "rainfall_score": rainfall_score,
+        "groundwater_score": 0.0,
+        "environment_score": 0.0,
+        "construction_score": 0.0,
+    }
+    priority_rank = None
+    analysis_date = None
+    reference_region = None
+
+    if nearest_region and coverage["factor"] > 0:
+        factor = float(coverage["factor"])
+        features = {
+            "past_sinkhole_count": float(nearest_region.get("past_sinkhole_count") or 0) * factor,
+            "gpr_detected_count": float(nearest_region.get("gpr_detected_count") or 0) * factor,
+            "facility_aging_score": float(nearest_region.get("facility_aging_score") or 0) * factor,
+            "rainfall_score": rainfall_score,
+            "groundwater_score": float(nearest_region.get("groundwater_score") or 0) * factor,
+            "environment_score": float(nearest_region.get("environment_score") or 0) * factor,
+            "construction_score": float(nearest_region.get("construction_score") or 0) * factor,
+        }
+        priority_rank = nearest_region.get("priority_rank") if coverage["status"] == "near" else None
+        analysis_date = nearest_region.get("analysis_date")
+        reference_region = {
+            "region_id": nearest_region.get("region_id"),
+            "region_name": nearest_region.get("region_name"),
+            "sido": nearest_region.get("sido"),
+            "sigungu": nearest_region.get("sigungu"),
+            "latitude": nearest_region.get("latitude"),
+            "longitude": nearest_region.get("longitude"),
+            "distance_m": round(distance_m or 0.0, 1),
+            "total_risk_score": round(float(nearest_region.get("total_risk_score") or 0.0), 2),
+            "risk_level": nearest_region.get("risk_level"),
+        }
+
+    score, breakdown = score_rule_based(features)
     level = risk_level(score)
     location_payload = asdict(location)
     location_payload["road_address"] = location.location_name
@@ -146,7 +257,8 @@ def build_commercial_analysis(location_name: str | None, latitude: float | None,
         "analysis": {
             "total_risk_score": round(score, 2),
             "risk_level": level,
-            "priority_rank": None,
+            "priority_rank": priority_rank,
+            "analysis_date": analysis_date,
         },
         "breakdown": {
             "past_sinkhole": breakdown.past_sinkhole,
@@ -165,15 +277,23 @@ def build_commercial_analysis(location_name: str | None, latitude: float | None,
             "elevation": round(weather["elevation"], 1),
         },
         "features": {
-            "past_sinkhole_count": 0,
-            "gpr_detected_count": 0,
-            "facility_aging_score": 0.0,
+            "past_sinkhole_count": features["past_sinkhole_count"],
+            "gpr_detected_count": features["gpr_detected_count"],
+            "facility_aging_score": features["facility_aging_score"],
             "rainfall_score": rainfall_score,
-            "groundwater_score": 0.0,
-            "environment_score": 0.0,
-            "construction_score": 0.0,
+            "groundwater_score": features["groundwater_score"],
+            "environment_score": features["environment_score"],
+            "construction_score": features["construction_score"],
         },
-        "note": "실시간 위치 분석은 현재 연동 가능한 실제 기상 데이터만 반영합니다. 과거 사고, GPR, 시설물, 지하수, 공사 데이터는 원본 데이터가 없으면 0점으로 처리합니다.",
+        "data_coverage": {
+            **coverage,
+            "distance_m": round(distance_m, 1) if distance_m is not None else None,
+            "reference_region": reference_region,
+        },
+        "note": (
+            "선택 좌표 자체에 직접 매칭된 원천자료가 없을 때는 가까운 저장 분석 지점을 참조합니다. "
+            "근접 지점이 없으면 강우 외 항목은 신뢰 있게 추정하지 않습니다."
+        ),
     }
 
 

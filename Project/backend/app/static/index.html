@@ -7,7 +7,7 @@
   <meta http-equiv="Pragma" content="no-cache">
   <meta http-equiv="Expires" content="0">
   <title>SinkHole 대시보드</title>
-  <link rel="stylesheet" href="/static/styles.css?v=20260509-scenario-controls" onerror="this.onerror=null;this.href='styles.css?v=20260509-scenario-controls';">
+  <link rel="stylesheet" href="/static/styles.css?v=20260510-stable-ui" onerror="this.onerror=null;this.href='styles.css?v=20260510-stable-ui';">
 </head>
 <body>
   <div class="app-shell">
@@ -73,7 +73,7 @@
         <div class="topbar-copy">
           <p id="heroKicker" class="eyebrow">대시보드</p>
           <h1 id="pageTitle">Sinkhole Risk Dashboard</h1>
-          <p id="heroDescription">진주지역 지반침하 위험 현황과 지역별 분석을 한 화면에서 확인합니다.</p>
+          <p id="heroDescription">서울/수도권 지반침하 위험 현황과 지역별 분석을 한 화면에서 확인합니다.</p>
         </div>
         <div class="topbar-actions">
           <span class="status-pill">
@@ -100,9 +100,9 @@
       </header>
 
       <section class="metric-grid" aria-label="핵심 지표">
-        <article class="metric-card metric-average metric-detail-card" data-metric-detail="averageRisk" role="button" tabindex="0" aria-label="진주지역 평균 위험도 상세 보기">
+        <article class="metric-card metric-average metric-detail-card" data-metric-detail="averageRisk" role="button" tabindex="0" aria-label="서울/수도권 평균 위험도 상세 보기">
           <div class="metric-copy">
-            <span>진주지역 평균 위험도</span>
+            <span>서울/수도권 평균 위험도</span>
             <strong id="metricAverage">-</strong>
             <small id="averageRiskLabel">중간</small>
           </div>
@@ -169,7 +169,7 @@
           <label class="field">
             <span id="locationSearchLabel">위치 검색</span>
             <div class="inline-field">
-              <input id="liveLocationInput" type="text" placeholder="예: 진주역, 경남">
+              <input id="liveLocationInput" type="text" placeholder="예: 강남역, 서울">
               <button id="pickOnMapButton" class="secondary" type="button">지도에서 선택</button>
             </div>
           </label>
@@ -187,7 +187,7 @@
           <div class="panel-head">
             <div>
               <p class="eyebrow">위험도 지도</p>
-              <h3 id="mapTitle">진주지역 지반침하 위험도</h3>
+              <h3 id="mapTitle">서울/수도권 지반침하 위험도</h3>
               <p id="mapDescription">지역별 위험 점수와 우선 점검 대상을 지도에서 확인합니다.</p>
             </div>
             <div id="mapLegend" class="map-legend"></div>
@@ -446,10 +446,10 @@
       <div class="ai-chat-prompts" aria-label="추천 질문">
         <button type="button" data-chat-prompt="현재 가장 위험한 지역이 어디야?">가장 위험한 지역</button>
         <button type="button" data-chat-prompt="그 지역이 위험한 이유가 뭐야?">위험한 이유</button>
-        <button type="button" data-chat-prompt="위험 점수를 낮추려면 무엇을 해야 해?">점수 낮추기</button>
+        <button type="button" data-chat-prompt="현재 가장 위험한 지역의 점수를 낮추려면 공공데이터 근거를 바탕으로 어디서부터 어떤 보수·점검을 해야 해?">점수 낮추기</button>
       </div>
       <form id="aiChatForm" class="ai-chat-form">
-        <input id="aiChatInput" type="text" placeholder="예: 대한민국에서 현재 싱크홀 위험도가 가장 높은 곳이 어디야?" autocomplete="off">
+        <input id="aiChatInput" type="text" placeholder="예: 서울/수도권에서 현재 싱크홀 위험도가 가장 높은 곳이 어디야?" autocomplete="off">
         <button id="aiChatSendButton" class="primary" type="submit">전송</button>
       </form>
     </div>
@@ -537,6 +537,6 @@
     </div>
   </dialog>
 
-  <script src="/static/app.js?v=20260509-scenario-controls" onerror="this.onerror=null;this.src='app.js?v=20260509-scenario-controls';"></script>
+  <script src="/static/app.js?v=20260510-stable-ui" onerror="this.onerror=null;this.src='app.js?v=20260510-stable-ui';"></script>
 </body>
 </html>

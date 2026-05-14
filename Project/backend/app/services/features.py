@@ -192,6 +192,21 @@ def load_or_build_feature_row(conn: sqlite3.Connection, region_id: int, analysis
         "SELECT COALESCE(SUM(cavity_count), 0) AS s FROM gpr_inspection WHERE region_id = ?",
         (region_id,),
     )["s"]
+    geophysics_signal = query_one(
+        conn,
+        """
+        SELECT COALESCE(SUM(
+            CASE
+                WHEN survey_method LIKE '%GPR%' OR survey_method LIKE '%레이다%' OR survey_method LIKE '%레이더%' THEN 0.25
+                ELSE 0.10
+            END
+        ), 0) AS s
+        FROM molit_aggregate_geophysics
+        WHERE region_id = ?
+        """,
+        (region_id,),
+    )["s"]
+    gpr_detected_count = float(gpr_detected_count or 0) + min(2.0, float(geophysics_signal or 0))
     facility_aging_score = query_one(
         conn, "SELECT COALESCE(AVG(aging_score), 0) AS a FROM facility_safety WHERE region_id = ?", (region_id,)
     )["a"]

@@ -5,8 +5,16 @@ import sqlite3
 from fastapi import APIRouter, Depends
 
 from app.config.settings import settings
+from app.db.core import query_all
 from app.main_deps import get_db
+from app.routes.analysis import analyze_region, analyze_road
+from app.services.features import today_str
+from app.services.local_construction_importer import (
+    import_local_construction_files,
+    local_construction_import_status,
+)
 from app.services.public_data_collector import collect_public_data_once, get_public_data_status
+from app.services.seoul_open_data_collector import collect_seoul_open_data_once
 from app.utils.response import ok
 
 
@@ -21,6 +29,59 @@ def public_data_status() -> dict:
 @router.post("/api/public-data/refresh")
 def refresh_public_data() -> dict:
     return ok(collect_public_data_once())
+
+
+@router.get("/api/public-data/seoul/status")
+def seoul_open_data_status() -> dict:
+    return ok(
+        {
+            "enabled": bool(settings.seoul_open_data_enabled),
+            "key_loaded": bool(settings.seoul_open_data_api_key),
+            "base_url": settings.seoul_open_data_base_url,
+            "services": {
+                "groundwater_observations": settings.seoul_groundwater_observation_service,
+                "rainfall": settings.seoul_rainfall_service,
+                "sewer_levels": settings.seoul_sewer_level_service,
+                "road_excavation": settings.seoul_road_excavation_service,
+            },
+            "tables": {
+                "seoul_groundwater_observations": "groundwater observations normalized into groundwater_data",
+                "seoul_sewer_levels": "sewer levels normalized into environment_features",
+                "weather_data": "Seoul rainfall observations",
+                "construction_events": "Seoul road excavation events",
+            },
+        }
+    )
+
+
+@router.post("/api/public-data/seoul/import")
+def refresh_seoul_open_data(conn: sqlite3.Connection = Depends(get_db)) -> dict:
+    result = collect_seoul_open_data_once(conn)
+    analysis_date = today_str()
+    conn.execute("DELETE FROM feature_dataset WHERE analysis_date = ?", (analysis_date,))
+    conn.execute("DELETE FROM road_feature_dataset WHERE analysis_date = ?", (analysis_date,))
+    for region in query_all(conn, "SELECT region_id FROM regions ORDER BY region_id"):
+        analyze_region(conn, int(region["region_id"]), analysis_date)
+    for road in query_all(conn, "SELECT road_id FROM road_segments ORDER BY road_id"):
+        analyze_road(conn, int(road["road_id"]), analysis_date)
+    return ok(result)
+
+
+@router.get("/api/public-data/local-construction/status")
+def local_construction_status(conn: sqlite3.Connection = Depends(get_db)) -> dict:
+    return ok(local_construction_import_status(conn))
+
+
+@router.post("/api/public-data/local-construction/import")
+def refresh_local_construction(conn: sqlite3.Connection = Depends(get_db)) -> dict:
+    result = import_local_construction_files(conn, force=True)
+    if result.get("changed"):
+        analysis_date = today_str()
+        for region in query_all(conn, "SELECT region_id FROM regions ORDER BY region_id"):
+            analyze_region(conn, int(region["region_id"]), analysis_date)
+        for road in query_all(conn, "SELECT road_id FROM road_segments ORDER BY road_id"):
+            analyze_road(conn, int(road["road_id"]), analysis_date)
+    return ok(result)
 
 
 @router.get("/api/public-data/ground-layers/status")

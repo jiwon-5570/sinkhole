@@ -8,6 +8,7 @@ if __name__ == "__main__" and __package__ is None:  # pragma: no cover
 
 import asyncio
 from contextlib import asynccontextmanager, suppress
+import logging
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -32,11 +33,34 @@ from app.routes.report import router as report_router
 from app.routes.simulation import router as simulation_router
 from app.security import BasicAuthMiddleware
 from app.services.features import today_str
+from app.services.local_construction_importer import import_local_construction_files
 from app.services.public_data_collector import public_data_scheduler
 from app.services.real_data_targets import ensure_public_ground_regions
 
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
+LOGGER = logging.getLogger(__name__)
+
+
+def _reanalyze_all_targets(conn, analysis_date: str) -> None:
+    regions = query_all(conn, "SELECT region_id FROM regions ORDER BY region_id")
+    for region in regions:
+        analyze_region(conn, int(region["region_id"]), analysis_date)
+    roads = query_all(conn, "SELECT road_id FROM road_segments ORDER BY road_id")
+    for road in roads:
+        analyze_road(conn, int(road["road_id"]), analysis_date)
+
+
+def import_local_construction_and_reanalyze() -> dict:
+    conn = connect(settings.db_path)
+    try:
+        result = import_local_construction_files(conn)
+        if result.get("changed"):
+            _reanalyze_all_targets(conn, today_str())
+        conn.commit()
+        return result
+    finally:
+        conn.close()
 
 
 def initialize_app_data() -> None:
@@ -49,18 +73,31 @@ def initialize_app_data() -> None:
 
         ensure_public_ground_regions(conn)
 
+        if settings.local_construction_file_import_enabled:
+            import_local_construction_files(conn)
+
         if settings.analyze_on_start:
             analysis_date = today_str()
-            regions = query_all(conn, "SELECT region_id FROM regions ORDER BY region_id")
-            for region in regions:
-                analyze_region(conn, int(region["region_id"]), analysis_date)
-            roads = query_all(conn, "SELECT road_id FROM road_segments ORDER BY road_id")
-            for road in roads:
-                analyze_road(conn, int(road["road_id"]), analysis_date)
+            _reanalyze_all_targets(conn, analysis_date)
 
         conn.commit()
     finally:
         conn.close()
+
+
+async def local_construction_file_scheduler(stop_event: asyncio.Event) -> None:
+    interval = max(5, int(settings.local_construction_file_import_interval_seconds))
+    while not stop_event.is_set():
+        try:
+            await asyncio.wait_for(stop_event.wait(), timeout=interval)
+            break
+        except asyncio.TimeoutError:
+            try:
+                result = await asyncio.to_thread(import_local_construction_and_reanalyze)
+                if result.get("changed"):
+                    LOGGER.info("local construction files imported: %s", result)
+            except Exception as exc:
+                LOGGER.warning("local construction file import failed: %s", exc)
 
 
 @asynccontextmanager
@@ -68,8 +105,11 @@ async def lifespan(_: FastAPI):
     initialize_app_data()
     stop_event = asyncio.Event()
     public_data_task: asyncio.Task | None = None
+    local_construction_task: asyncio.Task | None = None
     if settings.public_data_auto_collect:
         public_data_task = asyncio.create_task(public_data_scheduler(stop_event))
+    if settings.local_construction_file_import_enabled:
+        local_construction_task = asyncio.create_task(local_construction_file_scheduler(stop_event))
     try:
         yield
     finally:
@@ -78,6 +118,10 @@ async def lifespan(_: FastAPI):
             public_data_task.cancel()
             with suppress(asyncio.CancelledError):
                 await public_data_task
+        if local_construction_task:
+            local_construction_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await local_construction_task
 
 
 def create_app() -> FastAPI:
@@ -171,9 +215,9 @@ def create_app() -> FastAPI:
                 ),
                 "default_mode": "live",
                 "scenario_center": {
-                    "name": "GNU Gajwa Campus, Jinju",
-                    "latitude": 35.1525,
-                    "longitude": 128.1049,
+                    "name": "Seoul Metropolitan Risk Center",
+                    "latitude": 37.54,
+                    "longitude": 127.04,
                 },
             },
         }

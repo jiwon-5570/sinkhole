@@ -31,19 +31,33 @@ ACTION_BY_FACTOR = {
 }
 
 REGION_ROAD_ADDRESSES = {
-    101: "경상남도 진주시 진주대로 501",
-    102: "경상남도 진주시 진주역로 130",
-    103: "경상남도 진주시 충의로 19",
-    104: "경상남도 진주시 남강로1번길 146",
-    105: "경상남도 사천시 사천읍 사천대로 1971",
+    900001: "서울특별시 강동구 천호대로 1095 인근",
+    900002: "서울특별시 강남구 테헤란로 152 인근",
+    900003: "서울특별시 송파구 송파대로 167 인근",
+    900004: "서울특별시 송파구 올림픽로 300 인근",
+    900005: "서울특별시 송파구 중대로 135 인근",
+    900006: "서울특별시 강서구 마곡중앙로 161 인근",
+    900007: "서울특별시 영등포구 국회대로 608 인근",
+    900008: "서울특별시 서초구 서초대로 396 인근",
+    900009: "서울특별시 성동구 왕십리로 222 인근",
+    900010: "서울특별시 마포구 월드컵북로 400 인근",
+    900011: "서울특별시 용산구 한강대로 405 인근",
+    900012: "서울특별시 구로구 디지털로 300 인근",
 }
 
 REGION_ADDRESS_ALIASES = {
-    101: "경상국립대학교 가좌캠퍼스",
-    102: "진주역",
-    103: "진주혁신도시 한국토지주택공사 본사",
-    104: "진양호전망대",
-    105: "사천공항",
+    900001: "강동·하남권",
+    900002: "강남권",
+    900003: "송파·성남권",
+    900004: "송파·광진권",
+    900005: "송파·강동권",
+    900006: "강서·마곡권",
+    900007: "영등포·마포권",
+    900008: "서초·강남권",
+    900009: "성동·동대문권",
+    900010: "마포·상암권",
+    900011: "중구·용산권",
+    900012: "구로·금천권",
 }
 
 
@@ -290,16 +304,16 @@ def _top_region_answer(top_rows: list[dict[str, Any]], analysis_date: str | None
     factors = _top_factors(payload or {})
     reason = _factor_text(factors)
     return (
-        f"현재 프로그램에 등록된 진주지역 중심 분석 대상 기준으로 가장 싱크홀 발생 위험도가 높은 곳은 "
+        f"현재 프로그램에 등록된 서울/수도권 중심 분석 대상 기준으로 가장 싱크홀 발생 위험도가 높은 곳은 "
         f"도로명 주소 기준 {_address_label(top)}입니다. 최신 분석일 {analysis_date or top.get('analysis_date') or '-'} 기준 "
         f"위험도는 {_fmt(top['total_risk_score'])}/100점, 등급은 {top['risk_level']}, 우선순위는 {top['priority_rank']}위입니다. "
-        f"주요 근거는 {reason}입니다. 진주지역 중심으로 현재 시스템 DB에 들어온 분석 대상 기준의 판단입니다."
+        f"주요 근거는 {reason}입니다. 서울/수도권 중심으로 현재 시스템 DB에 들어온 분석 대상 기준의 판단입니다."
     )
 
 
 def _reason_answer(target: dict[str, Any] | None, payload: dict[str, Any] | None) -> str:
     if not target or not payload:
-        return "설명할 대상 지역을 찾지 못했습니다. 예를 들어 '가좌캠퍼스 위험 이유 알려줘'처럼 지역명을 함께 물어보면 더 정확히 답할 수 있습니다."
+        return "설명할 대상 지역을 찾지 못했습니다. 예를 들어 '강남권 위험 이유 알려줘'처럼 지역명을 함께 물어보면 더 정확히 답할 수 있습니다."
     analysis = payload.get("analysis") or {}
     factors = _top_factors(payload)
     reason_card = _replace_region_name((payload.get("reason_cards") or [{}])[0].get("body") or "", target)
@@ -317,11 +331,34 @@ def _management_answer(target: dict[str, Any] | None, payload: dict[str, Any] | 
         return "관리 방안을 설명할 대상 지역을 찾지 못했습니다. 현재는 상위 위험 지역을 기준으로 답변하는 방식이 가장 정확합니다."
     analysis = payload.get("analysis") or {}
     factors = _top_factors(payload)
+    breakdown = payload.get("breakdown") or {}
+    features = payload.get("features") or {}
+    cards = payload.get("reason_cards") or []
+    top_factor_names = [FACTOR_LABELS.get(key, key) for key, _ in factors]
+    data_basis = [
+        f"과거 지반침하 {int(_num(features.get('past_sinkhole_count'), 0))}건",
+        f"GPR/탐사 지표 {_fmt(features.get('gpr_detected_count'))}",
+        f"시설물 노후도 {_fmt(features.get('facility_aging_score'))}",
+        f"강우 {_fmt(features.get('rainfall_score'))}",
+        f"지하수 {_fmt(features.get('groundwater_score'))}",
+        f"환경 {_fmt(features.get('environment_score'))}",
+        f"공사 영향 {_fmt(features.get('construction_score'))}",
+    ]
+    first_card = str((cards[0] if cards else {}).get("body") or "")
+    if len(first_card) > 180:
+        first_card = first_card[:180].rstrip() + "..."
     return (
-        f"{_address_label(target)}의 위험 점수를 낮추려면 먼저 상위 기여 요인을 줄여야 합니다. "
-        f"현재 점수는 {_fmt(analysis.get('total_risk_score'))}점이고 주요 기여 요인은 {_factor_text(factors)}입니다. "
-        f"{_action_text(factors)} "
-        "조치 이후에는 같은 기준으로 재분석해서 총점이 60점 아래로 내려가는지 확인하는 것이 운영 목표입니다."
+        f"{_address_label(target)}의 점수를 낮추려면 점수 기여도가 큰 항목부터 처리해야 합니다. "
+        f"현재 점수는 {_fmt(analysis.get('total_risk_score'))}/100점, 등급은 {analysis.get('risk_level') or '-'}이고 "
+        f"우선순위가 높은 원인은 {', '.join(top_factor_names) or '뚜렷한 단일 요인 없음'}입니다.\n\n"
+        "1. 1차 현장 확인: 과거 침하 지점과 현재 공사/굴착 구간을 지도에서 겹쳐 보고, 도로 균열, 함몰, 포장 처짐, 배수 불량을 먼저 확인합니다.\n"
+        "2. 지중 원인 점검: GPR 또는 물리탐사 자료가 있는 구간은 공동 의심 구간을 우선 재탐사하고, 자료가 없는 구간은 지하매설물 위치 확인 후 표본 탐사를 잡습니다.\n"
+        "3. 시설물 보수: 시설물 점수가 크면 상하수관, 맨홀, 노후 관로 이음부, 누수 흔적을 먼저 조사하고 누수/파손 발견 시 관로 보수와 되메움 다짐을 같이 진행합니다.\n"
+        "4. 강우·지하수 대응: 비가 온 뒤 24~72시간 동안 배수 상태와 지하수 변동을 확인하고, 물고임이나 토사 유실 흔적이 있으면 임시 차수와 배수 정비를 우선합니다.\n"
+        "5. 재평가 기준: 보수 후 같은 날짜 기준으로 재분석해 과거 사고 외의 가변 항목, 특히 시설물·공사·강우·지하수 기여도가 내려갔는지 확인합니다.\n\n"
+        f"현재 공공데이터 근거값은 {', '.join(data_basis)}입니다. "
+        f"{first_card} "
+        "따라서 단순히 전체 점수를 낮추는 것이 아니라, 위 항목 중 실제 현장에서 확인되는 원인을 제거한 뒤 재분석하는 방식이 가장 신뢰도 높습니다."
     )
 
 
@@ -334,12 +371,141 @@ def _monitoring_answer(summary: dict[str, Any]) -> str:
     )
 
 
+TERM_DEFINITIONS = {
+    "기타매설물 손상": (
+        "상수관, 하수관처럼 별도 원인 항목으로 분류된 시설이 아니라 통신관, 전력관, 가스관, 공동구 부속관로, "
+        "기타 지하 매설 시설이 공사나 노후화 등으로 손상되어 주변 토사가 유실된 경우를 뜻합니다. "
+        "지반침하 사고 데이터의 원인 분류값이며, 이 값이 많으면 해당 구간은 지하매설물 위치 확인과 굴착 관리가 중요합니다."
+    ),
+    "상수관 손상": "상수도관이 파손되거나 누수되어 토사가 물과 함께 빠져나가면서 지반이 약해지는 경우입니다.",
+    "하수관 손상": "하수관 균열, 이음부 파손, 누수로 주변 토사가 관로 안이나 빈 공간으로 유실되는 경우입니다.",
+    "굴착공사 부실": "굴착 중 흙막이, 되메우기, 다짐, 배수 관리가 부족해 지반이 약해진 경우입니다.",
+    "다짐 불량": "굴착 후 되메운 흙을 충분히 다지지 않아 시간이 지나며 침하가 발생할 수 있는 상태입니다.",
+    "공동": "지하에 생긴 빈 공간입니다. GPR 탐사에서 공동이 발견되면 지반침하 위험 신호로 봅니다.",
+    "GPR": "Ground Penetrating Radar의 약자로, 지표면에서 전자파를 쏴 지하 공동이나 이상 구간을 찾는 탐사 방식입니다.",
+    "지하수": "지반 내부의 물입니다. 수위가 급격히 변하거나 지반 내 물 흐름이 커지면 토사 유실과 침하 가능성이 커질 수 있습니다.",
+}
+
+
+SOURCE_DESCRIPTIONS = {
+    "ground_subsidence_accident": "국토교통부/국토안전관리원 전국지반침하정보표준데이터",
+    "kalis_public_facility_safety": "국토안전관리원 공공시설물 안전관리 데이터",
+    "kalis_public_facility_diagnosis": "국토안전관리원 공공시설물 진단/점검 데이터",
+    "molit_underground_safety": "국토교통부 지하안전영향평가 관련 데이터",
+    "kma_asos_hourly_rainfall": "기상청 ASOS 시간 단위 강우 데이터",
+    "molit_ground_boreholes": "국토교통부 지반정보 시추공 데이터",
+    "seoul_open_data": "서울열린데이터광장 지하수, 강우, 하수관로 수위, 도로굴착 데이터",
+    "seoul_groundwater_observations": "서울열린데이터광장 보조지하수 관측망 관측정보",
+    "seoul_rainfall": "서울열린데이터광장 강우량 정보",
+    "seoul_sewer_levels": "서울열린데이터광장 하수관로 수위 현황",
+    "seoul_road_excavation": "서울열린데이터광장 도로굴착 공사 현황",
+}
+
+
+def _matched_term(message: str) -> str | None:
+    normalized = _normalize(message)
+    if not normalized:
+        return None
+    for term in sorted(TERM_DEFINITIONS, key=len, reverse=True):
+        if _normalize(term) in normalized:
+            return term
+    return None
+
+
+def _is_definition_question(message: str) -> bool:
+    lower = message.lower()
+    return bool(_matched_term(message)) and _contains(
+        lower,
+        ("뜻", "의미", "무슨", "뭐야", "설명", "정의", "말이야"),
+    )
+
+
+def _term_answer(message: str, conn: sqlite3.Connection) -> str | None:
+    term = _matched_term(message)
+    if not term:
+        return None
+
+    cause_count = 0
+    try:
+        cause_row = query_one(
+            conn,
+            """
+            SELECT COUNT(*) AS c
+            FROM sinkhole_history
+            WHERE cause_type = ?
+            """,
+            (term,),
+        )
+        cause_count = int((cause_row or {}).get("c") or 0)
+    except Exception:
+        cause_count = 0
+
+    suffix = (
+        f" 현재 DB의 과거 지반침하 이력에는 이 원인으로 분류된 사고가 {cause_count}건 들어 있습니다."
+        if cause_count
+        else " 현재 선택된 분석 DB에서는 이 원인명 자체가 없거나, 아직 해당 원인으로 집계된 사고가 없습니다."
+    )
+    return f"'{term}'은 {TERM_DEFINITIONS[term]}{suffix}"
+
+
+def _source_counts(conn: sqlite3.Connection) -> list[dict[str, Any]]:
+    rows = query_all(
+        conn,
+        """
+        SELECT source_name, COUNT(*) AS c
+        FROM raw_source_records
+        GROUP BY source_name
+        ORDER BY c DESC
+        """
+    )
+    normalized = []
+    for row in rows:
+        name = str(row.get("source_name") or "")
+        normalized.append(
+            {
+                "source_name": name,
+                "label": SOURCE_DESCRIPTIONS.get(name, name),
+                "count": int(row.get("c") or 0),
+            }
+        )
+    return normalized
+
+
+def _data_answer(message: str, conn: sqlite3.Connection) -> str:
+    source_counts = _source_counts(conn)
+    source_text = ", ".join(f"{row['label']} {row['count']}건" for row in source_counts[:5]) or "원천 레코드 없음"
+
+    table_counts = {
+        "과거 지반침하": conn.execute("SELECT COUNT(*) FROM sinkhole_history").fetchone()[0],
+        "시설물 점검": conn.execute("SELECT COUNT(*) FROM facility_inspection").fetchone()[0],
+        "시설물 현황": conn.execute("SELECT COUNT(*) FROM facility_status").fetchone()[0],
+        "강우": conn.execute("SELECT COUNT(*) FROM weather_data").fetchone()[0],
+        "지하수": conn.execute("SELECT COUNT(*) FROM groundwater_data").fetchone()[0],
+        "공사 영향": conn.execute("SELECT COUNT(*) FROM construction_events").fetchone()[0],
+    }
+    table_text = ", ".join(f"{name} {count}건" for name, count in table_counts.items())
+
+    if _contains(message, ("출처", "어디서", "사이트", "api", "API")):
+        return (
+            "현재 점수에 쓰는 자료 출처는 공공데이터포털, 서울열린데이터광장, 기상청 ASOS, 국토교통부 지반정보, "
+            "국토안전관리원 시설물 데이터입니다. "
+            f"원천 수집 레코드 상위 항목은 {source_text}입니다. "
+            "과거 사고는 국토교통부/국토안전관리원 전국지반침하정보표준데이터가 `sinkhole_history`에 반영됩니다."
+        )
+
+    return (
+        f"현재 DB에 반영된 주요 정규 데이터는 {table_text}입니다. "
+        f"원천 레코드 기준 상위 수집 자료는 {source_text}입니다. "
+        "점수 계산은 이 정규 테이블에서 지역별 특징값을 만들고, 과거 사고, GPR, 시설물, 강우, 지하수, 환경, 공사 영향 항목으로 합산합니다."
+    )
+
+
 def _fallback_answer(summary: dict[str, Any], top_rows: list[dict[str, Any]], analysis_date: str | None) -> str:
     leader = top_rows[0] if top_rows else None
     if leader:
         return (
             f"현재 데이터 기준으로는 도로명 주소 기준 {_address_label(leader)}이 {_fmt(leader['total_risk_score'])}점으로 가장 우선 관리 대상입니다. "
-            f"최신 분석일은 {analysis_date or '-'}이고, 진주지역 평균 위험도는 {_fmt(summary['average_risk_score'])}점입니다. "
+            f"최신 분석일은 {analysis_date or '-'}이고, 서울/수도권 평균 위험도는 {_fmt(summary['average_risk_score'])}점입니다. "
             "질문을 조금 더 구체적으로 주시면 위험한 이유, 관리 방법, 점수 낮추는 방법, 보고서 작성 방향 중 하나로 바로 설명하겠습니다."
         )
     return "현재 분석 결과가 아직 충분하지 않습니다. 먼저 위험도 분석을 실행한 뒤 다시 질문해 주세요."
@@ -352,18 +518,25 @@ def _local_chat_answer(
     analysis_date: str | None,
     target: dict[str, Any] | None,
     payload: dict[str, Any] | None,
+    conn: sqlite3.Connection | None = None,
 ) -> str:
     lower = message.lower()
+    if conn is not None and _is_definition_question(message):
+        answer = _term_answer(message, conn)
+        if answer:
+            return answer
     if _contains(lower, ("목적", "뭐하는", "무슨 프로그램", "사용 목적", "시스템 설명")):
         return _purpose_answer(summary, top_rows, analysis_date)
     elif _contains(lower, ("전체", "현황", "요약", "상황", "현재 상태")) and not _contains(lower, ("이유", "왜")):
         return _overview_answer(summary, top_rows, analysis_date)
     elif _contains(lower, ("어디", "가장", "최고", "높은 곳", "위험지역", "위험 지역")) and not _contains(lower, ("이유", "왜", "원인", "근거")):
         return _top_region_answer(top_rows, analysis_date, payload)
+    elif _contains(lower, ("관리", "대응", "낮추", "줄이", "조치", "개선", "점수", "보수", "정비", "어디서부터", "어떻게 해야")):
+        return _management_answer(target, payload)
     elif _contains(lower, ("이유", "왜", "원인", "근거", "판단")):
         return _reason_answer(target, payload)
-    elif _contains(lower, ("관리", "대응", "낮추", "줄이", "조치", "개선", "점수")):
-        return _management_answer(target, payload)
+    elif conn is not None and _contains(lower, ("자료", "데이터", "출처", "원천", "공공데이터", "api", "api키", "테이블", "정규데이터")):
+        return _data_answer(message, conn)
     elif _contains(lower, ("모니터링", "센서", "탐지")):
         return _monitoring_answer(summary)
     return _fallback_answer(summary, top_rows, analysis_date)
@@ -371,6 +544,10 @@ def _local_chat_answer(
 
 def _requires_verified_local_answer(message: str) -> bool:
     lower = message.lower()
+    if _is_definition_question(message):
+        return True
+    if _contains(lower, ("관리", "대응", "낮추", "줄이", "조치", "개선", "점수", "보수", "정비", "어디서부터", "어떻게 해야")):
+        return True
     return _contains(
         lower,
         (
@@ -379,9 +556,13 @@ def _requires_verified_local_answer(message: str) -> bool:
             "탐지",
             "최근 건수",
             "데이터 출처",
+            "자료",
             "공공데이터",
             "원본 데이터",
             "정규데이터",
+            "테이블",
+            "api",
+            "api키",
             "가짜",
             "데모",
         ),
@@ -401,7 +582,7 @@ def _chat_context(
     breakdown = payload.get("breakdown") if payload else None
     reason_cards = payload.get("reason_cards") if payload else []
     return {
-        "program_scope": "현재 시스템 DB에 등록된 진주지역 중심 분석 대상 기준입니다. 대한민국 전체 결과로 표현하면 안 됩니다.",
+        "program_scope": "현재 시스템 DB에 등록된 서울/수도권 중심 분석 대상 기준입니다. 대한민국 전체 결과로 표현하면 안 됩니다.",
         "latest_analysis_date": analysis_date,
         "summary": {
             "region_count": int(summary.get("region_count") or 0),
@@ -448,7 +629,7 @@ def _gemini_prompt(req: AiChatRequest, context: dict[str, Any]) -> str:
 반드시 지킬 규칙:
 - 아래 제공된 CONTEXT 데이터만 근거로 답하세요. 없는 사실, 대한민국 전체 실시간 데이터, 외부 최신 뉴스는 지어내지 마세요.
 - 위치를 말할 때는 내부 키 이름을 말하지 말고, 지역명/시설명 대신 도로명 주소 문자열만 사용하세요.
-- 사용자가 대한민국 전체를 물어도 "현재 시스템에 등록된 진주지역 중심 분석 대상 기준"이라고 분명히 말하세요.
+- 사용자가 대한민국 전체를 물어도 "현재 시스템에 등록된 서울/수도권 중심 분석 대상 기준"이라고 분명히 말하세요.
 - 위험한 이유를 물으면 점수, 등급, 주요 기여 요인을 함께 설명하세요.
 - 관리 방법을 물으면 점수를 낮추기 위한 실행 조치를 말하세요.
 - 질문이 범위를 벗어나면 싱크홀 위험관리 데이터 기준으로 답할 수 있는 질문을 안내하세요.
@@ -505,7 +686,7 @@ def ai_chat(req: AiChatRequest, conn: sqlite3.Connection = Depends(get_db)) -> d
     top_rows = _top_regions(conn, analysis_date, 5)
     target = _target_region(conn, req, top_rows)
     payload = _region_payload(conn, int(target["region_id"]), analysis_date) if target else None
-    local_answer = _local_chat_answer(message, summary, top_rows, analysis_date, target, payload)
+    local_answer = _local_chat_answer(message, summary, top_rows, analysis_date, target, payload, conn)
 
     engine = "local_fallback"
     fallback_reason = None
@@ -533,11 +714,11 @@ def ai_chat(req: AiChatRequest, conn: sqlite3.Connection = Depends(get_db)) -> d
                 "top_regions": top_rows[:3],
                 "average_risk_score": round(_num(summary["average_risk_score"]), 1),
             },
-            "quick_questions": [
-                "현재 가장 위험한 지역이 어디야?",
-                "그 지역이 위험한 이유가 뭐야?",
-                "위험 점수를 낮추려면 무엇을 해야 해?",
-                "전체 현황을 요약해줘.",
-            ],
+        "quick_questions": [
+            "현재 가장 위험한 지역이 어디야?",
+            "그 지역이 위험한 이유가 뭐야?",
+            "현재 가장 위험한 지역의 점수를 낮추려면 공공데이터 근거를 바탕으로 어디서부터 어떤 보수·점검을 해야 해?",
+            "전체 현황을 요약해줘.",
+        ],
         }
     )

@@ -38,6 +38,14 @@ def _int_env(name: str, default: int) -> int:
         return default
 
 
+def _path_env(name: str, default: Path) -> Path:
+    raw = os.getenv(name)
+    if not raw:
+        return default
+    path = Path(raw)
+    return path if path.is_absolute() else BASE_DIR / path
+
+
 @dataclass(frozen=True)
 class Settings:
     environment: str = os.getenv("SINKHOLE_ENV", "development")
@@ -82,6 +90,24 @@ class Settings:
     public_data_accident_lookback_days: int = _int_env("SINKHOLE_PUBLIC_DATA_ACCIDENT_LOOKBACK_DAYS", 3650)
     public_data_weather_lookback_days: int = _int_env("SINKHOLE_PUBLIC_DATA_WEATHER_LOOKBACK_DAYS", 14)
     public_data_construction_lookback_days: int = _int_env("SINKHOLE_PUBLIC_DATA_CONSTRUCTION_LOOKBACK_DAYS", 1095)
+    seoul_open_data_api_key: str | None = os.getenv("SEOUL_OPEN_DATA_API_KEY") or os.getenv("SEOUL_API_KEY")
+    seoul_open_data_enabled: bool = _bool_env("SINKHOLE_SEOUL_OPEN_DATA_ENABLED", True)
+    seoul_open_data_base_url: str = os.getenv("SINKHOLE_SEOUL_OPEN_DATA_BASE_URL", "http://openapi.seoul.go.kr:8088")
+    seoul_open_data_rows_per_page: int = _int_env("SINKHOLE_SEOUL_OPEN_DATA_ROWS_PER_PAGE", 1000)
+    seoul_open_data_max_pages: int = _int_env("SINKHOLE_SEOUL_OPEN_DATA_MAX_PAGES", 3)
+    seoul_groundwater_observation_service: str = os.getenv("SINKHOLE_SEOUL_GROUNDWATER_OBSERVATION_SERVICE", "VTsSec")
+    seoul_rainfall_service: str = os.getenv("SINKHOLE_SEOUL_RAINFALL_SERVICE", "ListRainfallService")
+    seoul_sewer_level_service: str = os.getenv("SINKHOLE_SEOUL_SEWER_LEVEL_SERVICE", "DrainpipeMonitoringInfo")
+    seoul_road_excavation_service: str = os.getenv("SINKHOLE_SEOUL_ROAD_EXCAVATION_SERVICE", "TnCnwInfoView")
+    local_construction_file_import_enabled: bool = _bool_env("SINKHOLE_LOCAL_CONSTRUCTION_FILE_IMPORT_ENABLED", True)
+    local_construction_file_import_interval_seconds: int = _int_env(
+        "SINKHOLE_LOCAL_CONSTRUCTION_FILE_IMPORT_INTERVAL_SECONDS",
+        30,
+    )
+    local_construction_file_dir: Path = _path_env(
+        "SINKHOLE_LOCAL_CONSTRUCTION_FILE_DIR",
+        BASE_DIR / "data" / "raw" / "public" / "seoul_road_excavation",
+    )
     molit_borehole_api_enabled: bool = _bool_env("SINKHOLE_MOLIT_BOREHOLE_API_ENABLED", True)
     molit_borehole_api_url: str = os.getenv(
         "SINKHOLE_MOLIT_BOREHOLE_API_URL",
@@ -92,6 +118,13 @@ class Settings:
     molit_borehole_refresh_days: int = _int_env("SINKHOLE_MOLIT_BOREHOLE_REFRESH_DAYS", 30)
     molit_borehole_min_cached_rows: int = _int_env("SINKHOLE_MOLIT_BOREHOLE_MIN_CACHED_ROWS", 300000)
     molit_borehole_coord_crs: str = os.getenv("SINKHOLE_MOLIT_BOREHOLE_COORD_CRS", "EPSG:5186")
+    molit_aggregate_geophysics_enabled: bool = _bool_env("SINKHOLE_MOLIT_AGGREGATE_GEOPHYSICS_ENABLED", True)
+    molit_aggregate_geophysics_url: str = os.getenv(
+        "SINKHOLE_MOLIT_AGGREGATE_GEOPHYSICS_URL",
+        "https://api.odcloud.kr/api/15135630/v1/uddi:a19a4b57-3523-4570-ac2e-926a0a114978",
+    )
+    molit_aggregate_geophysics_rows_per_page: int = _int_env("SINKHOLE_MOLIT_AGGREGATE_GEOPHYSICS_ROWS_PER_PAGE", 1000)
+    molit_aggregate_geophysics_max_pages: int = _int_env("SINKHOLE_MOLIT_AGGREGATE_GEOPHYSICS_MAX_PAGES", 1)
     safemap_old_building_enabled: bool = _bool_env("SINKHOLE_SAFEMAP_OLD_BUILDING_ENABLED", True)
     safemap_old_building_api_url: str = os.getenv(
         "SINKHOLE_SAFEMAP_OLD_BUILDING_API_URL",
@@ -127,8 +160,11 @@ class Settings:
         "SINKHOLE_KMA_ASOS_HOURLY_URL",
         "http://apis.data.go.kr/1360000/AsosHourlyInfoService/getWthrDataList",
     )
-    kma_asos_station_ids: str = os.getenv("SINKHOLE_KMA_ASOS_STATION_IDS", "192")
-    kma_asos_target_sigungus: str = os.getenv("SINKHOLE_KMA_ASOS_TARGET_SIGUNGUS", "진주시")
+    kma_asos_station_ids: str = os.getenv("SINKHOLE_KMA_ASOS_STATION_IDS", "108")
+    kma_asos_target_sigungus: str = os.getenv(
+        "SINKHOLE_KMA_ASOS_TARGET_SIGUNGUS",
+        "강남구,송파구,강동구,강서구,영등포구,서초구,성동구,마포구,용산구,구로구",
+    )
     building_permit_url: str = os.getenv(
         "SINKHOLE_BUILDING_PERMIT_URL",
         "http://apis.data.go.kr/1613000/ArchPmsHubService/getApBasisOulnInfo",

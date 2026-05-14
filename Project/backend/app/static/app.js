@@ -20,9 +20,9 @@ const state = {
   aiChatWelcomed: false,
   mapBounds: null,
   mapView: {
-    latitude: 35.1525,
-    longitude: 128.1049,
-    zoom: 14,
+    latitude: 37.54,
+    longitude: 127.04,
+    zoom: 11,
   },
   mapPickActive: false,
   liveLocation: {
@@ -126,7 +126,7 @@ const TEXT = {
     pageTitle: "Sinkhole Risk Dashboard",
     heroKicker: "대시보드",
     heroHeadline: "지반침하 위험 분석",
-    heroDescription: "진주지역 지반침하 위험 현황과 지역별 분석을 한 화면에서 확인합니다.",
+    heroDescription: "서울/수도권 지반침하 위험 현황과 지역별 분석을 한 화면에서 확인합니다.",
     controlsTitle: "분석 컨트롤",
     controlsDescription: "지역과 날짜를 선택한 뒤 위험도 분석 또는 AI 리포트를 실행합니다.",
     scenarioMode: "시나리오 모드",
@@ -296,6 +296,16 @@ function looksLikeCoordinates(value) {
   return /(^|[^\d.-])-?\d{1,3}(?:\.\d+)?\s*,\s*-?\d{1,3}(?:\.\d+)?($|[^\d.])/.test(String(value || "").trim());
 }
 
+function parseCoordinates(value) {
+  const match = String(value || "").trim().match(/(-?\d{1,3}(?:\.\d+)?)\s*,\s*(-?\d{1,3}(?:\.\d+)?)/);
+  if (!match) return null;
+  const latitude = Number(match[1]);
+  const longitude = Number(match[2]);
+  if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) return null;
+  if (Math.abs(latitude) > 90 || Math.abs(longitude) > 180) return null;
+  return { latitude, longitude };
+}
+
 function regionRoadAddress(region) {
   if (!region) return "도로명 주소 확인 필요";
   return region.road_address
@@ -319,11 +329,18 @@ function nearestKnownRoadAddress(latitude, longitude) {
   const lat = Number(latitude);
   const lng = Number(longitude);
   const points = [
-    { latitude: 35.1525, longitude: 128.1049, address: REGION_ROAD_ADDRESSES[101] },
-    { latitude: 35.1801, longitude: 128.1074, address: REGION_ROAD_ADDRESSES[102] },
-    { latitude: 35.1815, longitude: 128.1698, address: REGION_ROAD_ADDRESSES[103] },
-    { latitude: 35.1730, longitude: 128.0418, address: REGION_ROAD_ADDRESSES[104] },
-    { latitude: 35.0880, longitude: 128.0725, address: REGION_ROAD_ADDRESSES[105] },
+    { latitude: 37.5640, longitude: 127.1738, address: REGION_ROAD_ADDRESSES[900001] },
+    { latitude: 37.5239, longitude: 127.0264, address: REGION_ROAD_ADDRESSES[900002] },
+    { latitude: 37.4778, longitude: 127.1242, address: REGION_ROAD_ADDRESSES[900003] },
+    { latitude: 37.5223, longitude: 127.0762, address: REGION_ROAD_ADDRESSES[900004] },
+    { latitude: 37.5254, longitude: 127.1235, address: REGION_ROAD_ADDRESSES[900005] },
+    { latitude: 37.5666, longitude: 126.8312, address: REGION_ROAD_ADDRESSES[900006] },
+    { latitude: 37.5275, longitude: 126.9269, address: REGION_ROAD_ADDRESSES[900007] },
+    { latitude: 37.4780, longitude: 127.0265, address: REGION_ROAD_ADDRESSES[900008] },
+    { latitude: 37.5724, longitude: 127.0268, address: REGION_ROAD_ADDRESSES[900009] },
+    { latitude: 37.5734, longitude: 126.8783, address: REGION_ROAD_ADDRESSES[900010] },
+    { latitude: 37.5246, longitude: 126.9693, address: REGION_ROAD_ADDRESSES[900011] },
+    { latitude: 37.5239, longitude: 126.8805, address: REGION_ROAD_ADDRESSES[900012] },
   ];
   if (!Number.isFinite(lat) || !Number.isFinite(lng)) return "도로명 주소 확인 필요";
   const nearest = points
@@ -332,7 +349,7 @@ function nearestKnownRoadAddress(latitude, longitude) {
       distance: Math.pow(lat - point.latitude, 2) + Math.pow(lng - point.longitude, 2),
     }))
     .sort((a, b) => a.distance - b.distance)[0];
-  return nearest ? `${nearest.address} 인근` : "도로명 주소 확인 필요";
+  return nearest ? nearest.address : "도로명 주소 확인 필요";
 }
 
 function locationRoadAddress(location) {
@@ -367,6 +384,28 @@ async function reverseGeocodeAddress(latitude, longitude) {
     console.warn("reverse geocode failed", error);
   }
   return fallback;
+}
+
+async function geocodeLocationByAddress(address) {
+  const query = String(address || "").trim();
+  if (!query) throw new Error(t().liveMissing);
+  const data = await api(`/api/geocode/search?q=${encodeURIComponent(query)}`, {
+    timeoutMs: 12000,
+  });
+  const latitude = Number(data?.latitude);
+  const longitude = Number(data?.longitude);
+  if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) {
+    throw new Error("입력한 위치의 지도 좌표를 찾지 못했습니다. 도로명 주소를 더 구체적으로 입력해 주세요.");
+  }
+  const resolvedAddress = data?.address && !looksLikeCoordinates(data.address)
+    ? data.address
+    : query;
+  return {
+    address: resolvedAddress,
+    latitude,
+    longitude,
+    source: data?.source || "geocode",
+  };
 }
 
 function riskMeta(level, score) {
@@ -407,21 +446,28 @@ const DETAIL_FACTOR_LABELS = {
 };
 
 const REGION_ROAD_ADDRESSES = {
-  101: "경상남도 진주시 진주대로 501",
-  102: "경상남도 진주시 진주역로 130",
-  103: "경상남도 진주시 충의로 19",
-  104: "경상남도 진주시 남강로1번길 146",
-  105: "경상남도 사천시 사천읍 사천대로 1971",
+  900001: "서울특별시 강동구 천호대로 1095 인근",
+  900002: "서울특별시 강남구 테헤란로 152 인근",
+  900003: "서울특별시 송파구 송파대로 167 인근",
+  900004: "서울특별시 송파구 올림픽로 300 인근",
+  900005: "서울특별시 송파구 중대로 135 인근",
+  900006: "서울특별시 강서구 마곡중앙로 161 인근",
+  900007: "서울특별시 영등포구 국회대로 608 인근",
+  900008: "서울특별시 서초구 서초대로 396 인근",
+  900009: "서울특별시 성동구 왕십리로 222 인근",
+  900010: "서울특별시 마포구 월드컵북로 400 인근",
+  900011: "서울특별시 용산구 한강대로 405 인근",
+  900012: "서울특별시 구로구 디지털로 300 인근",
 };
 
 const ROAD_ROAD_ADDRESSES = {
-  1001: "경상남도 진주시 진주대로 501 동측 도로",
-  1002: "경상남도 진주시 진주대로 501 서문 인근",
-  1003: "경상남도 진주시 진주역로 130 중앙로 인근",
-  1004: "경상남도 진주시 진주역로 130 환승로 인근",
-  1005: "경상남도 진주시 충의로 19 인근",
-  1006: "경상남도 진주시 남강로1번길 146 인근",
-  1007: "경상남도 사천시 사천읍 사천대로 1971 인근",
+  1001: "서울특별시 강남구 테헤란로 인근",
+  1002: "서울특별시 송파구 송파대로 인근",
+  1003: "서울특별시 강동구 천호대로 인근",
+  1004: "서울특별시 강서구 마곡중앙로 인근",
+  1005: "서울특별시 영등포구 국회대로 인근",
+  1006: "서울특별시 서초구 서초대로 인근",
+  1007: "서울특별시 마포구 월드컵북로 인근",
 };
 
 const RECENT_DETECTIONS = [];
@@ -968,7 +1014,7 @@ function metricDetailGoogleTarget(points) {
   const latitude = Number(primary?.latitude);
   const longitude = Number(primary?.longitude);
   const hasCoords = Number.isFinite(latitude) && Number.isFinite(longitude);
-  const query = encodeURIComponent(hasCoords ? `${latitude},${longitude}` : primary?.label || "Jinju");
+  const query = encodeURIComponent(hasCoords ? `${latitude},${longitude}` : primary?.label || "Seoul");
   const center = hasCoords ? `&ll=${encodeURIComponent(`${latitude},${longitude}`)}` : "";
   const zoom = points.length > 3 ? 12 : 14;
   return {
@@ -1067,8 +1113,8 @@ function buildMetricDetail(kind, payload = null) {
 
   if (kind === "averageRisk") {
     return {
-      title: "진주지역 평균 위험도 상세",
-      subtitle: `현재 평균 위험도는 ${formatNumber(average, 0)}점이며 등록된 진주지역 분석 대상의 위험 수준을 종합한 지표입니다.`,
+      title: "서울/수도권 평균 위험도 상세",
+      subtitle: `현재 평균 위험도는 ${formatNumber(average, 0)}점이며 등록된 서울/수도권 분석 대상의 위험 수준을 종합한 지표입니다.`,
       points: metricDetailPoints(kind),
       rows: state.regions.slice(0, 5).map((region) => {
         const risk = scoreForRegion(region);
@@ -1076,7 +1122,7 @@ function buildMetricDetail(kind, payload = null) {
       }),
       summaryTitle: "AI 종합 판단",
       summary: [
-        `평균 위험도 ${formatNumber(average, 0)}점은 진주지역 분석 대상의 위험 점수를 합산해 본 운영 관점의 대표 지표입니다.`,
+        `평균 위험도 ${formatNumber(average, 0)}점은 서울/수도권 분석 대상의 위험 점수를 합산해 본 운영 관점의 대표 지표입니다.`,
         "평균값은 낮아 보여도 일부 고위험 지역이 존재하면 현장 대응 우선순위는 고위험 지역 중심으로 잡아야 합니다.",
       ],
       actions: [
@@ -1397,11 +1443,11 @@ function selectedMapTarget() {
   }
 
   return {
-    name: "GNU Gajwa Campus, Jinju",
-    address: "경상남도 진주시 진주대로 501",
-    latitude: 35.1525,
-    longitude: 128.1049,
-    zoom: 14,
+    name: "Seoul Metropolitan Risk Center",
+    address: "서울특별시 강남구 테헤란로 152 인근",
+    latitude: 37.5239,
+    longitude: 127.0264,
+    zoom: 12,
   };
 }
 
@@ -1412,7 +1458,7 @@ function renderGoogleMapFrame(target, force = false) {
   const hasCoords = Number.isFinite(latitude) && Number.isFinite(longitude);
   const requestedZoom = Number(target.zoom);
   const zoomLevel = Number.isFinite(requestedZoom) ? requestedZoom : 14;
-  const query = encodeURIComponent(hasCoords ? `${latitude},${longitude}` : target.name || "Jinju");
+  const query = encodeURIComponent(hasCoords ? `${latitude},${longitude}` : target.name || "Seoul");
   const center = hasCoords ? `&ll=${encodeURIComponent(`${latitude},${longitude}`)}` : "";
   const zoom = encodeURIComponent(String(zoomLevel));
   const src = `https://maps.google.com/maps?q=${query}${center}&z=${zoom}&output=embed`;
@@ -2137,19 +2183,48 @@ function closeQuickMenu() {
 
 async function applyLiveLocation() {
   const rawName = (el.liveLocationInput?.value || "").trim();
-  const name = looksLikeCoordinates(rawName)
-    ? locationRoadAddress(state.liveLocation)
-    : rawName;
-  if (!name) {
+  if (!rawName) {
     setStatus(t().liveMissing);
     return;
   }
-  state.liveLocation.name = name;
-  state.liveLocation.address = name;
-  if (el.liveLocationInput) el.liveLocationInput.value = name;
-  setMode("live", { silent: true });
-  renderMap();
-  setStatus("위치를 지도에 적용했습니다. 분석을 실행해 위험도를 계산하세요.");
+
+  const button = $("applyLocationButton");
+  if (button) button.disabled = true;
+  setStatus("입력한 도로명 주소의 지도 위치를 찾는 중입니다.");
+  try {
+    const coordinates = parseCoordinates(rawName);
+    const resolved = coordinates
+      ? {
+          ...coordinates,
+          address: await reverseGeocodeAddress(coordinates.latitude, coordinates.longitude),
+          source: "coordinates",
+        }
+      : await geocodeLocationByAddress(rawName);
+    const address = resolved.address || rawName;
+
+    state.liveLocation = {
+      name: address,
+      address,
+      road_address: address,
+      formatted_address: address,
+      location_name: address,
+      latitude: Number(resolved.latitude),
+      longitude: Number(resolved.longitude),
+      source: resolved.source,
+    };
+    state.selectedRegionName = address;
+    if (el.liveLocationInput) el.liveLocationInput.value = address;
+    setText(el.heroHeadline, `${address} 위험 분석`);
+    setText(el.selectedRegionText, address);
+    setText(el.resultCoords, address);
+    setMode("live", { silent: true });
+    renderMap({ forceMapFrame: true });
+    setStatus(`지도 위치를 적용했습니다: ${address}. 위험도 분석을 실행하면 이 위치 기준으로 계산합니다.`);
+  } catch (error) {
+    setStatus(error.message);
+  } finally {
+    if (button) button.disabled = false;
+  }
 }
 
 function clampValue(value, min, max) {
@@ -2456,7 +2531,7 @@ window.__sinkholeActions = {
   closeAiChat,
 };
 window.__sinkholeAppReady = true;
-window.__sinkholeAssetVersion = "20260509-scenario-controls";
+window.__sinkholeAssetVersion = "20260510-stable-ui";
 
 bootstrap().catch((error) => {
   console.error(error);
