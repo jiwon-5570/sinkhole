@@ -111,6 +111,18 @@ def _row_label(row: dict[str, Any], *keys: str) -> str:
     return "-"
 
 
+SOURCE_LABELS = {
+    "ground_subsidence_accident": "국토교통부/국토안전관리원 지반침하 사고 공공데이터",
+    "molit_ground_subsidence": "국토교통부 지반침하 공공데이터",
+    "seoul_open_data": "서울 열린데이터광장 공공데이터",
+}
+
+
+def _source_label(value: Any) -> str:
+    source = str(value or "").strip()
+    return SOURCE_LABELS.get(source, source or "출처 미기록")
+
+
 def _factor_values(factor_key: str, payload: dict[str, Any]) -> tuple[float, float]:
     features = payload.get("features") or {}
     breakdown = payload.get("breakdown") or {}
@@ -220,16 +232,72 @@ def _past_sinkhole_context(conn: sqlite3.Connection, region_id: int) -> dict[str
         """,
         (region_id,),
     )
+    count_row = query_one(
+        conn,
+        """
+        SELECT COUNT(*) AS count
+        FROM sinkhole_history
+        WHERE region_id = ?
+        """,
+        (region_id,),
+    ) or {}
+    cause_rows = query_all(
+        conn,
+        """
+        SELECT
+            COALESCE(NULLIF(TRIM(cause_type), ''), '미상') AS cause_type,
+            COUNT(*) AS count
+        FROM sinkhole_history
+        WHERE region_id = ?
+        GROUP BY COALESCE(NULLIF(TRIM(cause_type), ''), '미상')
+        ORDER BY count DESC, cause_type ASC
+        LIMIT 5
+        """,
+        (region_id,),
+    )
+    total_count = int(count_row.get("count") or 0)
+    accident_list = _join(
+        [
+            (
+                f"{row.get('occurrence_date') or '-'} {row.get('address') or '주소 없음'}"
+                f" / 원인 {row.get('cause_type') or '미상'}"
+                f" / 규모 {_fmt(row.get('damage_scale'))}"
+                f" / 출처 {_source_label(row.get('source_name'))}"
+            )
+            for row in rows
+        ],
+        empty="sinkhole_history에 과거 침하 사고 행이 없습니다.",
+    )
+    cause_distribution = _join(
+        [f"{row.get('cause_type')}: {int(row.get('count') or 0)}건" for row in cause_rows],
+        empty="원인 분포를 계산할 과거 사고 데이터가 없습니다.",
+    )
     return {
         "status": "confirmed" if rows else "missing",
-        "summary": _join(
-            [
-                f"{row.get('occurrence_date') or '-'} {row.get('address') or '주소 없음'} / 원인 {row.get('cause_type') or '미상'} / 규모 {_fmt(row.get('damage_scale'))}"
-                for row in rows
-            ],
-            empty="sinkhole_history에 과거 침하 사고 행이 없습니다.",
+        "summary": (
+            f"총 {total_count}건이 sinkhole_history에 들어 있습니다. "
+            f"주요 사고: {accident_list} 원인 분포: {cause_distribution}"
+        ),
+        "impact": (
+            "과거 사고는 같은 생활권 또는 도로축에서 이미 지반 약화, 매설물 손상, 되메우기 불량, "
+            "배수 불량 같은 취약 조건이 관측됐다는 신호입니다. 그래서 현재 공동이 확정됐다는 뜻은 아니지만, "
+            "비슷한 관로·굴착복구부·도로 구조가 반복되는 구간에서는 토사 유실 통로가 다시 생기거나 "
+            "기존 보수부 주변이 약해질 가능성을 높이는 반복 취약성 지표로 반영합니다."
+        ),
+        "management": (
+            "과거 사고 주소를 기준으로 주변 관로 CCTV/GPR 탐사, 포장 처짐·균열 현장 점검, "
+            "과거 복구부 보수 이력 확인을 우선 진행해야 합니다. 원인이 하수관·상수관·기타 매설물 손상이면 "
+            "해당 매설물 관리기관의 보수 완료 여부를 확인하고, 되메우기·굴착 관련 원인이면 굴착복구 품질과 "
+            "추가 침하 여부를 재점검해야 점수를 낮출 수 있습니다."
+        ),
+        "inference_note": (
+            "위 영향 설명은 과거 사고 위치와 원인 유형을 근거로 한 데이터 기반 추정입니다. "
+            "현재 같은 지점에 공동이나 누수가 존재한다는 확정 판단은 현장조사 또는 최신 탐지 데이터가 있어야 합니다."
         ),
         "limitation": "과거 사고는 반복 위험의 근거지만, 현재 같은 위치에서 침하가 진행 중이라는 뜻은 아닙니다.",
+        "accident_count": total_count,
+        "accident_list": accident_list,
+        "cause_distribution": cause_distribution,
         "rows": rows,
     }
 
@@ -501,6 +569,17 @@ def build_factor_evidence_answer(
         )
 
     item = query_factor_evidence(conn, factor_key, target, payload, analysis_date)
+    if factor_key == "past_sinkhole":
+        return (
+            f"{target_label}의 {item['label']} 기여점수는 {item['contribution']:.1f}점입니다. "
+            f"{item['formula']}\n\n"
+            f"공공데이터 근거: {item['accident_count']}건의 과거 지반침하 사고가 반영됐습니다. "
+            f"상세 이력은 {item['accident_list']}입니다. 원인 분포는 {item['cause_distribution']}입니다.\n\n"
+            f"싱크홀 위험에 미치는 영향: {item['impact']}\n\n"
+            f"관리 및 점수 저감 방향: {item['management']}\n\n"
+            f"주의: {item['limitation']} 확인되지 않은 사고나 원인은 만들지 않습니다.\n\n"
+            f"추측: {item['inference_note']}"
+        )
     return (
         f"{target_label}의 {item['label']} 기여점수는 {item['contribution']:.1f}점입니다. {item['formula']}\n\n"
         f"실제 데이터 근거: {item['summary']}\n\n"

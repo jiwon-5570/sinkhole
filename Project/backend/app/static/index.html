@@ -7,7 +7,7 @@
   <meta http-equiv="Pragma" content="no-cache">
   <meta http-equiv="Expires" content="0">
   <title>SinkHole 대시보드</title>
-  <link rel="stylesheet" href="/static/styles.css?v=20260514-detection-count" onerror="this.onerror=null;this.href='styles.css?v=20260514-detection-count';">
+  <link rel="stylesheet" href="/static/styles.css?v=20260514-help-update" onerror="this.onerror=null;this.href='styles.css?v=20260514-help-update';">
 </head>
 <body>
   <div class="app-shell">
@@ -426,6 +426,31 @@
         <input id="whatIfTargetOnly" type="checkbox">
         <span>현재 선택 지역에만 적용</span>
       </label>
+      <div class="whatif-mitigation-controls" aria-label="관리 조치 적용">
+        <p class="field-title">관리 조치 적용</p>
+        <div class="mitigation-grid">
+          <label class="check-field">
+            <input id="whatIfMitigationGpr" type="checkbox">
+            <span>GPR 정밀탐사 완료</span>
+          </label>
+          <label class="check-field">
+            <input id="whatIfMitigationPipe" type="checkbox">
+            <span>노후/손상 관로 보수</span>
+          </label>
+          <label class="check-field">
+            <input id="whatIfMitigationDrainage" type="checkbox">
+            <span>배수 정비 완료</span>
+          </label>
+          <label class="check-field">
+            <input id="whatIfMitigationConstruction" type="checkbox">
+            <span>굴착 품질·배수 관리</span>
+          </label>
+          <label class="check-field">
+            <input id="whatIfMitigationMonitoring" type="checkbox">
+            <span>모니터링 지점 추가</span>
+          </label>
+        </div>
+      </div>
       <p id="whatIfSummary" class="status-text">추가 강우 0mm / 대규모 공사 없음</p>
       <button id="simulateRiskButton" class="primary" type="button">시뮬레이션 실행</button>
       <div id="whatIfResults" class="whatif-results"></div>
@@ -489,14 +514,23 @@
       <div class="help-head">
         <div>
           <p id="helpEyebrow" class="eyebrow">도움말</p>
-          <h3 id="helpTitle">모드 및 사용 가이드</h3>
+          <h3 id="helpTitle">현재 기능 사용 가이드</h3>
         </div>
         <button id="helpClose" class="close-button" type="button">닫기</button>
       </div>
       <div class="help-body">
         <section class="help-section">
+          <h4 id="helpScopeTitle">프로그램 범위</h4>
+          <p>이 대시보드는 현재 서울/수도권 분석 지점과 도로명 주소 기반 위치를 중심으로 싱크홀 위험도를 계산합니다. 전국 전체를 대표하는 결과로 해석하면 안 됩니다.</p>
+          <ul>
+            <li>공공데이터포털, 서울 열린데이터광장, 파일데이터, 사용자가 입력한 시나리오 조건을 함께 사용합니다.</li>
+            <li>실제 원천 데이터가 없거나 부족한 항목은 임의로 만들지 않고, 대체 지표 또는 추정으로 분리해 표시합니다.</li>
+            <li>AI Chat과 리포트는 현재 DB에 들어온 근거를 우선 사용하며, 데이터 기반 추정은 추정이라고 표시합니다.</li>
+          </ul>
+        </section>
+        <section class="help-section">
           <h4 id="helpLangTitle">언어 설정</h4>
-          <p id="helpLangDesc">UI 언어를 선택하고 즉시 적용합니다.</p>
+          <p id="helpLangDesc">UI 언어를 선택하고 즉시 적용합니다. 주요 분석 결과와 도움말은 한국어 운영 기준으로 작성되어 있습니다.</p>
           <div class="mode-toggle">
             <select id="languageSelect">
               <option value="ko">한국어</option>
@@ -507,36 +541,83 @@
         </section>
         <section class="help-section">
           <h4 id="helpModeTitle">모드 전환</h4>
-          <p id="helpModeDesc">시나리오 모드는 내부 데이터, 실시간 모드는 입력 위치를 기반으로 분석합니다.</p>
+          <p id="helpModeDesc">현재 운영 흐름은 지역/도로 분석과 What-If 예측 분석을 중심으로 구성되어 있습니다. 위치를 직접 입력하거나 지도에서 선택해 분석 대상을 바꿀 수 있습니다.</p>
           <div class="mode-toggle help-mode-toggle">
             <button id="helpDemoModeButton" class="secondary" type="button">시나리오 모드</button>
             <button id="helpLiveModeButton" class="secondary" type="button">실시간 모드</button>
           </div>
           <ul>
-            <li id="helpModeScenarioDesc">시나리오 모드는 사전 구축된 지역 및 도로 데이터를 사용합니다.</li>
-            <li id="helpModeLiveDesc">실시간 모드는 위치명을 입력해 상용 분석 API를 실행합니다.</li>
+            <li id="helpModeScenarioDesc">지역/도로 분석은 공공데이터로 구축된 서울/수도권 분석 지점의 최신 위험 점수를 계산합니다.</li>
+            <li id="helpModeLiveDesc">주소 입력 또는 지도 선택은 선택 위치를 분석 대상에 적용하고, 도로명 주소 기준으로 화면에 표시합니다.</li>
           </ul>
         </section>
         <section class="help-section">
-          <h4 id="helpMapTitle">지도 안내</h4>
-          <p id="helpMapDesc1">위험도 색상은 낮음, 중간, 높음, 매우 높음 단계로 표시됩니다.</p>
-          <p id="helpMapDesc2">지도 위 점을 클릭하면 해당 지역 분석을 바로 실행합니다.</p>
+          <h4 id="helpWorkflowTitle">기본 사용 흐름</h4>
+          <ol class="help-steps">
+            <li>지역 또는 도로 단위를 선택합니다.</li>
+            <li>도로명 주소를 입력하고 지도에 적용하거나, 지도에서 위치를 직접 선택합니다.</li>
+            <li>위험도 분석을 실행해 점수, 기여 요인, 지도 위치를 확인합니다.</li>
+            <li>핵심 지표 카드를 누르면 상세 지도와 AI 근거 설명을 확인할 수 있습니다.</li>
+            <li>필요하면 AI Chat 또는 AI 리포트 생성으로 근거와 관리 방안을 문장형으로 확인합니다.</li>
+          </ol>
+        </section>
+        <section class="help-section">
+          <h4 id="helpMapTitle">지도 및 위치 안내</h4>
+          <p id="helpMapDesc1">위험도 색상은 낮음, 보통, 높음, 매우 높음 단계로 표시됩니다. 지도 점이나 Google 지도 패널은 선택한 분석 지점과 주변 위험 분포를 확인하는 용도입니다.</p>
+          <p id="helpMapDesc2">주소 입력은 도로명 주소를 기준으로 처리합니다. 지도에서 선택한 위치도 화면에는 좌표보다 도로명 주소가 우선 표시되도록 구성되어 있습니다.</p>
         </section>
         <section class="help-section">
           <h4 id="helpAnalysisTitle">분석 지표 설명</h4>
           <ul>
-            <li id="helpAnalysisLi1"><strong>과거 지반침하</strong>: 발생 빈도와 규모를 반영합니다.</li>
-            <li id="helpAnalysisLi2"><strong>GPR</strong>: 지중 공동 탐사 결과를 반영합니다.</li>
-            <li id="helpAnalysisLi3"><strong>시설물</strong>: 지하시설물 노후도와 상태를 반영합니다.</li>
-            <li id="helpAnalysisLi4"><strong>강우량</strong>: 최근 강우로 인한 지반 약화 가능성을 반영합니다.</li>
-            <li id="helpAnalysisLi5"><strong>지하수</strong>: 지하수위 변동을 반영합니다.</li>
+            <li id="helpAnalysisLi1"><strong>과거 지반침하</strong>: 과거 사고 건수를 기반으로 반복 취약성을 반영합니다. 사고가 있었다고 현재 침하가 진행 중이라는 뜻은 아닙니다.</li>
+            <li id="helpAnalysisLi2"><strong>GPR/탐사</strong>: 공동 탐지 또는 지반 탐사 이상 신호를 반영합니다.</li>
+            <li id="helpAnalysisLi3"><strong>시설물/노후건물</strong>: 시설물 상태, 노후도, 노후 건물 정보를 위험 요인으로 반영합니다.</li>
+            <li id="helpAnalysisLi4"><strong>강우</strong>: 최근 또는 시나리오 강우가 지반 약화와 배수 불량 위험에 미치는 영향을 반영합니다.</li>
+            <li id="helpAnalysisLi5"><strong>지하수</strong>: 지하수위 변동, 관측값 또는 시추공 기반 대체 지표를 반영합니다.</li>
+            <li><strong>지층/환경</strong>: 지층 정보, 도로·건물 밀집도, 취약 지반 조건을 반영합니다.</li>
+            <li><strong>굴착/공사</strong>: 도로굴착, 공사 거리, 굴착 깊이, 공사 영향 가능성을 반영합니다.</li>
           </ul>
-          <p id="helpAnalysisDesc">지표를 종합해 <strong>최종 위험 점수(0~100)</strong>를 산출합니다.</p>
+          <p id="helpAnalysisDesc">지표를 종합해 <strong>최종 위험 점수(0~100)</strong>를 산출합니다. 기준은 낮음 30점 미만, 보통 30~59.9점, 높음 60~79.9점, 매우 높음 80점 이상입니다.</p>
+        </section>
+        <section class="help-section">
+          <h4 id="helpWhatIfTitle">What-If 시뮬레이션</h4>
+          <p>예측 분석에서는 사용자가 강우, 지하수위, 굴착 깊이, 공사 거리, GPR 이상 신호, 시설물 노후 보정, 과거 침하 추가, 지층/환경 취약도를 조절할 수 있습니다.</p>
+          <ul>
+            <li>결과는 <strong>현재 점수 → 악화조건 점수 → 관리 조치 후 점수</strong> 순서로 표시됩니다.</li>
+            <li>관리 조치는 GPR 정밀탐사, 관로 보수, 배수 정비, 굴착 품질·배수 관리, 모니터링 지점 추가를 선택할 수 있습니다.</li>
+            <li>관리 조치 감점은 실제 조치가 완료됐다고 가정한 운영 시뮬레이션입니다. 현장 확인 없이 확정 효과로 해석하면 안 됩니다.</li>
+            <li>AI 해석 카드는 어떤 요인이 점수를 올렸고 어떤 조치가 점수를 낮췄는지 요약합니다.</li>
+          </ul>
+        </section>
+        <section class="help-section">
+          <h4 id="helpAiTitle">AI Chat 및 AI 리포트</h4>
+          <ul>
+            <li>AI Chat은 위험 지역, 이유, 관리 방안, 점수 산정 근거를 문장형으로 답합니다.</li>
+            <li>“과거사고가 왜 24점이야?”, “어떤 시설이 노후된 거야?”처럼 물으면 실제 DB 근거를 먼저 조회합니다.</li>
+            <li>원천 데이터에 없는 시설명, 사고 원인, 센서값은 만들지 않습니다.</li>
+            <li>근거 데이터로 해석한 예측이나 추론은 답변 마지막에 추측이라고 표시합니다.</li>
+          </ul>
+        </section>
+        <section class="help-section">
+          <h4 id="helpMonitoringTitle">모니터링 및 탐지 목록</h4>
+          <ul>
+            <li>모니터링 지점은 사용자가 최대 10개까지 등록할 수 있고, 해제 전까지 화면 접속 시 자동 갱신됩니다.</li>
+            <li>최근 탐지 건수와 탐지 목록은 실제 센서 또는 현장 탐지 이벤트가 연동된 경우에만 채워집니다.</li>
+            <li>연동 전에는 임의 탐지 데이터를 만들지 않고, 데이터 없음 또는 0건으로 표시합니다.</li>
+          </ul>
+        </section>
+        <section class="help-section">
+          <h4 id="helpDataTitle">데이터와 해석 주의사항</h4>
+          <ul>
+            <li>공공데이터 API 호출 실패, 승인 범위, 데이터 공백, 주소 매칭 실패가 있으면 점수가 낮거나 0으로 보일 수 있습니다.</li>
+            <li>과거 사고는 반복 취약성의 근거지만, 현재 같은 위치에서 싱크홀이 발생 중이라는 확정 증거는 아닙니다.</li>
+            <li>What-If와 AI 해석은 의사결정 보조 도구입니다. 최종 판단은 현장 점검, 최신 탐사, 관리기관 확인과 함께 해야 합니다.</li>
+          </ul>
         </section>
       </div>
     </div>
   </dialog>
 
-  <script src="/static/app.js?v=20260514-detection-count" onerror="this.onerror=null;this.src='app.js?v=20260514-detection-count';"></script>
+  <script src="/static/app.js?v=20260514-help-update" onerror="this.onerror=null;this.src='app.js?v=20260514-help-update';"></script>
 </body>
 </html>

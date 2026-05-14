@@ -104,6 +104,11 @@ const el = {
   whatIfEnvironmentValue: $("whatIfEnvironmentValue"),
   whatIfConstruction: $("whatIfConstruction"),
   whatIfTargetOnly: $("whatIfTargetOnly"),
+  whatIfMitigationGpr: $("whatIfMitigationGpr"),
+  whatIfMitigationPipe: $("whatIfMitigationPipe"),
+  whatIfMitigationDrainage: $("whatIfMitigationDrainage"),
+  whatIfMitigationConstruction: $("whatIfMitigationConstruction"),
+  whatIfMitigationMonitoring: $("whatIfMitigationMonitoring"),
   whatIfSummary: $("whatIfSummary"),
   whatIfResults: $("whatIfResults"),
   metricDetailDialog: $("metricDetailDialog"),
@@ -2248,6 +2253,13 @@ function updateWhatIfControls() {
   const horizon = Number(el.whatIfHorizon?.value || 24);
   const construction = Boolean(el.whatIfConstruction?.checked);
   const targetOnly = Boolean(el.whatIfTargetOnly?.checked);
+  const mitigationCount = [
+    el.whatIfMitigationGpr,
+    el.whatIfMitigationPipe,
+    el.whatIfMitigationDrainage,
+    el.whatIfMitigationConstruction,
+    el.whatIfMitigationMonitoring,
+  ].filter((item) => Boolean(item?.checked)).length;
   setText(el.whatIfRainfallValue, `${rainfall}mm`);
   setText(el.whatIfGroundwaterValue, `${groundwater.toFixed(1)}m`);
   setText(el.whatIfDepthValue, `${depth}m`);
@@ -2317,6 +2329,11 @@ async function runWhatIfSimulation() {
         facility_aging_delta: Number(el.whatIfFacility?.value || 0),
         past_sinkhole_delta_count: Number(el.whatIfPastSinkhole?.value || 0),
         environment_delta_score: Number(el.whatIfEnvironment?.value || 0),
+        mitigation_gpr_survey: Boolean(el.whatIfMitigationGpr?.checked),
+        mitigation_pipe_repair: Boolean(el.whatIfMitigationPipe?.checked),
+        mitigation_drainage: Boolean(el.whatIfMitigationDrainage?.checked),
+        mitigation_construction_control: Boolean(el.whatIfMitigationConstruction?.checked),
+        mitigation_monitoring: Boolean(el.whatIfMitigationMonitoring?.checked),
         target_region_id: el.whatIfTargetOnly?.checked ? state.selectedRegionId : null,
       }),
     });
@@ -2624,6 +2641,11 @@ function bindEvents() {
   el.whatIfEnvironment?.addEventListener("input", updateWhatIfControls);
   el.whatIfConstruction?.addEventListener("change", updateWhatIfControls);
   el.whatIfTargetOnly?.addEventListener("change", updateWhatIfControls);
+  el.whatIfMitigationGpr?.addEventListener("change", updateWhatIfControls);
+  el.whatIfMitigationPipe?.addEventListener("change", updateWhatIfControls);
+  el.whatIfMitigationDrainage?.addEventListener("change", updateWhatIfControls);
+  el.whatIfMitigationConstruction?.addEventListener("change", updateWhatIfControls);
+  el.whatIfMitigationMonitoring?.addEventListener("change", updateWhatIfControls);
   el.selectAllReports?.addEventListener("change", () => {
     state.selectedReports = el.selectAllReports.checked
       ? new Set(state.reports.map((row) => row.file_name))
@@ -2734,6 +2756,13 @@ updateWhatIfControls = function () {
   const horizon = Number(el.whatIfHorizon?.value || 24);
   const construction = Boolean(el.whatIfConstruction?.checked);
   const targetOnly = Boolean(el.whatIfTargetOnly?.checked);
+  const mitigationCount = [
+    el.whatIfMitigationGpr,
+    el.whatIfMitigationPipe,
+    el.whatIfMitigationDrainage,
+    el.whatIfMitigationConstruction,
+    el.whatIfMitigationMonitoring,
+  ].filter((item) => Boolean(item?.checked)).length;
   setText(el.whatIfRainfallValue, `${rainfall}mm`);
   setText(el.whatIfGroundwaterValue, `${groundwater.toFixed(1)}m`);
   setText(el.whatIfDepthValue, `${depth}m`);
@@ -2744,7 +2773,7 @@ updateWhatIfControls = function () {
   setText(el.whatIfEnvironmentValue, `${environment.toFixed(1)}점`);
   setText(
     el.whatIfSummary,
-    `${horizon}시간 예측 / 강우 ${rainfall}mm / 지하수 ${groundwater.toFixed(1)}m / GPR ${gpr}개 / ${construction ? "공사 반영" : "공사 없음"} / ${targetOnly ? "선택 지역만" : "전체 지역"}`,
+    `${horizon}시간 예측 / 강우 ${rainfall}mm / 지하수 ${groundwater.toFixed(1)}m / GPR ${gpr}개 / ${construction ? "공사 반영" : "공사 없음"} / 관리 조치 ${mitigationCount}개 / ${targetOnly ? "선택 지역만" : "전체 지역"}`,
   );
 };
 renderWhatIfResults = function (rows = []) {
@@ -2757,10 +2786,26 @@ renderWhatIfResults = function (rows = []) {
 
   rows.slice(0, 6).forEach((row) => {
     const original = Number(row.original_score || 0);
+    const scenarioScore = Number(row.scenario_score_before_mitigation ?? row.simulated_score ?? 0);
     const simulated = Number(row.simulated_score || 0);
     const diff = Number(row.score_diff || 0);
+    const scenarioDiff = Number(row.scenario_score_diff ?? (scenarioScore - original));
+    const mitigationReduction = Number(row.mitigation_reduction || 0);
     const drivers = Array.isArray(row.drivers) ? row.drivers.slice(0, 4) : [];
+    const factorChanges = Array.isArray(row.factor_changes) ? row.factor_changes : [];
+    const mitigations = Array.isArray(row.mitigation_effects) ? row.mitigation_effects : [];
+    const mitigationNotes = Array.isArray(row.mitigation_notes) ? row.mitigation_notes : [];
     const actions = Array.isArray(row.recommendations) ? row.recommendations.slice(0, 3) : [];
+    const quality = row.data_quality || {};
+    const aiCommentary = row.ai_commentary || "시뮬레이션 결과를 기준으로 점검 우선순위를 검토하세요.";
+    const mitigationHtml = mitigations.length || mitigationNotes.length
+      ? `
+        <div class="whatif-mitigation-result">
+          ${mitigations.map((item) => `<span>${escapeHtml(item.action_label || "관리 조치")} · ${escapeHtml(item.factor_label || "-")} -${formatNumber(item.reduction, 1)}점</span>`).join("")}
+          ${mitigationNotes.map((item) => `<span>${escapeHtml(item)}</span>`).join("")}
+        </div>
+      `
+      : "";
     const card = document.createElement("article");
     card.className = `whatif-result-card ${diff >= 8 ? "elevated" : ""}`;
     card.innerHTML = `
@@ -2775,18 +2820,43 @@ renderWhatIfResults = function (rows = []) {
           <i style="width:${Math.max(2, Math.min(100, original))}%"></i>
         </div>
         <div>
-          <small>시나리오</small>
+          <small>악화조건</small>
+          <b>${formatNumber(scenarioScore, 1)} (${scenarioDiff >= 0 ? "+" : ""}${formatNumber(scenarioDiff, 1)})</b>
+          <i class="scenario-bar" style="width:${Math.max(2, Math.min(100, scenarioScore))}%"></i>
+        </div>
+        <div>
+          <small>조치 후</small>
           <b>${formatNumber(simulated, 1)} (${diff >= 0 ? "+" : ""}${formatNumber(diff, 1)})</b>
-          <i class="scenario-bar" style="width:${Math.max(2, Math.min(100, simulated))}%"></i>
+          <i class="mitigation-bar" style="width:${Math.max(2, Math.min(100, simulated))}%"></i>
         </div>
       </div>
       <div class="whatif-result-meta">
         <span>${escapeHtml(row.original_level || "-")} → ${escapeHtml(row.new_risk_level || "-")}</span>
         <span>조치 ${escapeHtml(row.action_level || "-")}</span>
         <span>신뢰도 ${escapeHtml(row.confidence?.label || "-")}</span>
+        <span>관리 감점 ${formatNumber(mitigationReduction, 1)}점</span>
       </div>
       <div class="whatif-drivers">
         ${drivers.length ? drivers.map((driver) => `<span>${escapeHtml(driver.label)} +${formatNumber(driver.delta, 1)}</span>`).join("") : "<span>추가 상승 요인 없음</span>"}
+      </div>
+      <div class="whatif-factor-table">
+        ${factorChanges.map((item) => `
+          <div>
+            <span>${escapeHtml(item.label || item.factor || "-")}</span>
+            <b>${formatNumber(item.base, 1)} → ${formatNumber(item.scenario, 1)} → ${formatNumber(item.final, 1)}</b>
+            <i><em style="width:${Math.max(2, Math.min(100, Number(item.final || 0) * 5))}%"></em></i>
+            <small>상승 ${Number(item.increase || 0) >= 0 ? "+" : ""}${formatNumber(item.increase, 1)} / 조치 -${formatNumber(item.mitigation, 1)}</small>
+          </div>
+        `).join("")}
+      </div>
+      ${mitigationHtml}
+      <div class="whatif-ai-card">
+        <strong>AI 해석</strong>
+        <p>${escapeHtml(aiCommentary)}</p>
+      </div>
+      <div class="whatif-quality">
+        <span>데이터 충분성 ${escapeHtml(quality.label || "-")}</span>
+        <span>${escapeHtml(quality.basis || "근거 데이터 요약 없음")}</span>
       </div>
       <div class="whatif-actions">
         ${actions.map((item) => `<span>${escapeHtml(item)}</span>`).join("")}
@@ -2807,7 +2877,7 @@ window.__sinkholeActions = {
   closeAiChat,
 };
 window.__sinkholeAppReady = true;
-window.__sinkholeAssetVersion = "20260514-detection-count";
+window.__sinkholeAssetVersion = "20260514-help-update";
 
 bootstrap().catch((error) => {
   console.error(error);

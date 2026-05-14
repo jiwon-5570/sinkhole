@@ -39,6 +39,11 @@ class WhatIfRequest(BaseModel):
     facility_aging_delta: float = Field(default=0.0, ge=0.0, le=50.0)
     past_sinkhole_delta_count: int = Field(default=0, ge=0, le=10)
     environment_delta_score: float = Field(default=0.0, ge=0.0, le=10.0)
+    mitigation_gpr_survey: bool = False
+    mitigation_pipe_repair: bool = False
+    mitigation_drainage: bool = False
+    mitigation_construction_control: bool = False
+    mitigation_monitoring: bool = False
     target_region_id: int | None = Field(default=None, ge=1)
 
 
