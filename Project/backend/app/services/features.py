@@ -148,6 +148,53 @@ def _facility_status_aging_score(conn: sqlite3.Connection, region_id: int) -> fl
     return round(min(100.0, max(0.0, ratio)), 2)
 
 
+def _table_exists(conn: sqlite3.Connection, table_name: str) -> bool:
+    row = conn.execute(
+        "SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?",
+        (table_name,),
+    ).fetchone()
+    return bool(row)
+
+
+def _recency_weight(date_value: str | None) -> float:
+    if not date_value:
+        return 0.35
+    try:
+        parsed = datetime.fromisoformat(str(date_value)[:10])
+    except ValueError:
+        return 0.35
+    age_days = max(0, (datetime.now().date() - parsed.date()).days)
+    if age_days <= 365:
+        return 1.0
+    if age_days <= 365 * 3:
+        return 0.7
+    if age_days <= 365 * 5:
+        return 0.45
+    return 0.25
+
+
+def _facility_accident_score(conn: sqlite3.Connection, region_id: int) -> float:
+    if not _table_exists(conn, "facility_accidents"):
+        return 0.0
+    rows = conn.execute(
+        """
+        SELECT occurrence_date, risk_score
+        FROM facility_accidents
+        WHERE region_id = ?
+        ORDER BY occurrence_date DESC, COALESCE(risk_score, 0) DESC
+        LIMIT 20
+        """,
+        (region_id,),
+    ).fetchall()
+    if not rows:
+        return 0.0
+    score = 0.0
+    for row in rows:
+        risk = float(row["risk_score"] or 0.0)
+        score += min(5.0, risk / 18.0) * _recency_weight(row["occurrence_date"])
+    return round(min(20.0, score), 2)
+
+
 def _road_region_id(conn: sqlite3.Connection, road_id: int) -> int | None:
     row = query_one(conn, "SELECT region_id FROM road_segments WHERE road_id = ?", (road_id,))
     return int(row["region_id"]) if row and row.get("region_id") is not None else None
@@ -155,6 +202,13 @@ def _road_region_id(conn: sqlite3.Connection, road_id: int) -> int | None:
 
 def _apply_ground_layer_adjustment(conn: sqlite3.Connection, row: dict, *, region_id: int | None = None, road_id: int | None = None) -> dict:
     data = dict(row)
+    accident_region_id = region_id
+    if accident_region_id is None and road_id is not None:
+        accident_region_id = _road_region_id(conn, road_id)
+    facility_accident_score = _facility_accident_score(conn, accident_region_id) if accident_region_id is not None else 0.0
+    data["facility_accident_score"] = facility_accident_score
+    data["facility_aging_score"] = round(float(data.get("facility_aging_score") or 0.0) + facility_accident_score, 2)
+
     if region_id is not None:
         summary = summarize_ground_layers_for_region(conn, region_id)
     elif road_id is not None:

@@ -884,7 +884,10 @@ function renderCauseDistribution(rows = []) {
   if (el.causeChart && rows.length) {
     const note = document.createElement("p");
     note.className = "data-source";
-    note.textContent = `총 ${formatNumber(total)}건 기준`;
+    const fallback = rows.some((row) => row.scope === "all_regions_fallback");
+    note.textContent = fallback
+      ? `선택 지역 사고 이력 없음 · 서울/수도권 전체 ${formatNumber(total)}건 기준`
+      : `총 ${formatNumber(total)}건 기준`;
     el.causeChart.appendChild(note);
   }
 }

@@ -61,6 +61,24 @@ APPROVED_SOURCES = (
         max_rows_per_page=100,
     ),
     PublicDataSource(
+        name="kalis_old_facility",
+        label="KALIS old public facility information",
+        url=settings.kalis_old_facility_url,
+        scope="region",
+        normalizer="old_facility",
+        address_param="facilAddr",
+        max_rows_per_page=100,
+    ),
+    PublicDataSource(
+        name="kalis_facility_accident",
+        label="KALIS facility accident history",
+        url=settings.kalis_facility_accident_url,
+        scope="region",
+        normalizer="facility_accident",
+        address_param="facilAddr",
+        max_rows_per_page=100,
+    ),
+    PublicDataSource(
         name="molit_underground_safety",
         label="MOLIT underground safety information",
         url=settings.underground_safety_info_url,
@@ -168,6 +186,16 @@ _FACILITY_RISK_TERMS = (
     "\uc704\ud5d8",
     "\ubbf8\ud761",
     "\uacb0\ud568",
+)
+_FACILITY_ACCIDENT_RISK_TERMS = _FACILITY_RISK_TERMS + _SINKHOLE_TERMS + (
+    "\ubd95\uad34",
+    "\uc804\ub3c4",
+    "\uce68\uc218",
+    "\uc0c1\uc218\ub3c4",
+    "\ud558\uc218\ub3c4",
+    "\uad00\ub85c",
+    "\ub9e8\ud640",
+    "\uc9c0\ud558\uc218",
 )
 
 _BUILDING_PERMIT_TARGETS: dict[int, tuple[str, str]] = {
@@ -320,6 +348,32 @@ def _ensure_normalized_table_columns(conn: sqlite3.Connection) -> None:
     _ensure_column(conn, "underground_safety", "project_name", "TEXT")
     _ensure_column(conn, "underground_safety", "max_dig_depth", "REAL")
     _ensure_column(conn, "underground_safety", "risk_score", "REAL")
+
+    conn.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS facility_accidents (
+            id INTEGER PRIMARY KEY,
+            region_id INTEGER,
+            occurrence_date TEXT,
+            facility_type TEXT,
+            facility_name TEXT,
+            accident_type TEXT,
+            description TEXT,
+            risk_score REAL,
+            source_name TEXT,
+            source_record_id TEXT,
+            address TEXT,
+            latitude REAL,
+            longitude REAL,
+            raw_json TEXT,
+            FOREIGN KEY (region_id) REFERENCES regions(region_id),
+            UNIQUE(source_name, source_record_id)
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_facility_accidents_region_date
+            ON facility_accidents(region_id, occurrence_date);
+        """
+    )
 
     for table_name in ("sinkhole_history", "construction_events", "groundwater_data"):
         _ensure_column(conn, table_name, "source_name", "TEXT")
@@ -916,6 +970,22 @@ def _item_context(item: dict[str, Any]) -> dict[str, Any]:
     return context if isinstance(context, dict) else {}
 
 
+def _context_region(item: dict[str, Any], regions: list[dict[str, Any]]) -> dict[str, Any] | None:
+    context = _item_context(item)
+    region_id = _safe_int(context.get("region_id"), 0)
+    if region_id > 0:
+        for region in regions:
+            if int(region.get("region_id") or 0) == region_id:
+                return region
+
+    sigungu = str(context.get("sigungu") or "").strip()
+    if sigungu:
+        matches = [region for region in regions if str(region.get("sigungu") or "").strip() == sigungu]
+        if len(matches) == 1:
+            return matches[0]
+    return None
+
+
 def _resolve_item_region(item: dict[str, Any], regions: list[dict[str, Any]]) -> dict[str, Any] | None:
     coords = _item_lat_lon(item)
     if not coords:
@@ -1139,6 +1209,97 @@ def _accident_damage_scale(item: dict[str, Any]) -> float:
     return round(max(1.0, min(scale, 10.0)), 2)
 
 
+def _facility_accident_date(item: dict[str, Any]) -> str:
+    return _parse_public_date(
+        _first_text(
+            item,
+            ("accdntYmd", "accidentDate", "occrrncDe", "sagoDate", "sysRegDate", "regDate"),
+            "",
+        )
+    )
+
+
+def _facility_accident_risk_score(item: dict[str, Any]) -> float:
+    text = _item_text(item)
+    score = 20.0
+    if _contains_any(text, _FACILITY_RISK_TERMS):
+        score += 20.0
+    if _contains_any(text, _SINKHOLE_TERMS):
+        score += 25.0
+    if _contains_any(text, _FACILITY_ACCIDENT_RISK_TERMS):
+        score += 15.0
+
+    deaths = _safe_int(_ci_get(item, "deathCnt"), 0) + _safe_int(_ci_get(item, "dthCnt"), 0)
+    injuries = _safe_int(_ci_get(item, "woundCnt"), 0) + _safe_int(_ci_get(item, "injuryCnt"), 0)
+    property_damage = max(
+        _safe_float(_ci_get(item, "prptyDamageAmt"), 0.0),
+        _safe_float(_ci_get(item, "damageAmt"), 0.0),
+    )
+    score += min(25.0, deaths * 8.0 + injuries * 2.0 + property_damage / 1000.0)
+    return round(max(0.0, min(score, 100.0)), 1)
+
+
+def _insert_facility_accident(conn: sqlite3.Connection, region_id: int, item: dict[str, Any], source_name: str) -> bool:
+    occurrence_date = _facility_accident_date(item)
+    facility_type = _first_text(item, ("facilGbn", "facilKind", "facilityType", "fcltsType"), "facility")
+    facility_name = _item_name(item) or _first_text(item, ("fcltsNm", "facilityName"), "facility accident")
+    accident_type = _first_text(
+        item,
+        ("accdntType", "accidentType", "accdntNm", "accidentName", "causeType"),
+        "facility accident",
+    )[:200]
+    description = _first_text(
+        item,
+        ("accdntContent", "accidentContent", "accdntCauseDetail", "accidentCause", "sagoReason", "causeDetail"),
+        _item_text(item)[:500],
+    )[:500]
+    risk_score = _facility_accident_risk_score(item)
+    source_record_id = _item_record_id(item) or f"{region_id}:{occurrence_date}:{_payload_hash(item)}"
+    address = _item_address(item)
+    coords = _item_lat_lon(item)
+    latitude = coords[0] if coords else None
+    longitude = coords[1] if coords else None
+
+    existing = query_one(
+        conn,
+        """
+        SELECT id
+        FROM facility_accidents
+        WHERE source_name = ? AND source_record_id = ?
+        LIMIT 1
+        """,
+        (source_name, source_record_id),
+    )
+    if existing:
+        return False
+
+    conn.execute(
+        """
+        INSERT INTO facility_accidents(
+            region_id, occurrence_date, facility_type, facility_name, accident_type,
+            description, risk_score, source_name, source_record_id, address, latitude, longitude, raw_json
+        )
+        VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            region_id,
+            occurrence_date,
+            facility_type,
+            facility_name,
+            accident_type,
+            description,
+            risk_score,
+            source_name,
+            source_record_id,
+            address,
+            latitude,
+            longitude,
+            _stable_json(item),
+        ),
+    )
+    return True
+
+
 def _save_raw_records(
     conn: sqlite3.Connection,
     source: PublicDataSource,
@@ -1300,6 +1461,55 @@ def _insert_facility_status(conn: sqlite3.Connection, region_id: int, item: dict
             facility_type,
             aging_count,
             aging_ratio,
+            inspection_rate,
+            source_name,
+            source_record_id,
+            facility_name,
+            address,
+            latitude,
+            longitude,
+        ),
+    )
+    return True
+
+
+def _insert_old_facility_status(conn: sqlite3.Connection, region_id: int, item: dict[str, Any], source_name: str) -> bool:
+    facility_type = _first_text(item, ("facilGbn", "facilKind", "facilNm", "fcltsNm", "facilityName"), "old public facility")
+    facility_name = _item_name(item) or _first_text(item, ("fcltsNm", "facilityName"), "old public facility")
+    address = _item_address(item)
+    coords = _item_lat_lon(item)
+    latitude = coords[0] if coords else None
+    longitude = coords[1] if coords else None
+    source_record_id = _item_record_id(item) or f"{region_id}:{_payload_hash(item)}"
+    inspection_date = _facility_date(item)
+    inspection_rate = 100.0 if inspection_date else 0.0
+
+    existing = query_one(
+        conn,
+        """
+        SELECT id
+        FROM facility_status
+        WHERE region_id = ?
+          AND source_name = ?
+          AND source_record_id = ?
+        LIMIT 1
+        """,
+        (region_id, source_name, source_record_id),
+    )
+    if existing:
+        return False
+
+    conn.execute(
+        """
+        INSERT INTO facility_status(
+            region_id, facility_type, total_count, aging_count, aging_ratio, inspection_rate,
+            source_name, source_record_id, facility_name, address, latitude, longitude
+        )
+        VALUES(?, ?, 1, 1, 1.0, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            region_id,
+            facility_type,
             inspection_rate,
             source_name,
             source_record_id,
@@ -1949,8 +2159,10 @@ def _normalize_one_item(
         return _insert_aggregate_geophysics(conn, item, regions, source.name)
 
     target_region = _resolve_item_region(item, regions)
-    if not target_region and source.normalizer in {"accident", "underground"}:
+    if not target_region and source.normalizer in {"accident", "underground", "facility", "old_facility", "facility_accident"}:
         target_region = _resolve_region_by_dong_hint(item, regions)
+    if not target_region:
+        target_region = _context_region(item, regions)
     if not target_region:
         return False
 
@@ -1959,6 +2171,11 @@ def _normalize_one_item(
     if source.normalizer == "facility":
         changed = _insert_facility_inspection(conn, region_id, item, source.name) or changed
         changed = _insert_facility_status(conn, region_id, item, source.name) or changed
+    elif source.normalizer == "old_facility":
+        changed = _insert_facility_inspection(conn, region_id, item, source.name) or changed
+        changed = _insert_old_facility_status(conn, region_id, item, source.name) or changed
+    elif source.normalizer == "facility_accident":
+        changed = _insert_facility_accident(conn, region_id, item, source.name) or changed
     elif source.normalizer == "accident":
         changed = _insert_sinkhole_history(conn, region_id, item, source.name) or changed
     elif source.normalizer == "underground":
@@ -2007,6 +2224,7 @@ def _clear_rebuilt_public_tables(conn: sqlite3.Connection) -> None:
     # Rebuild them each run so changed location-matching rules do not leave stale rows.
     conn.execute("DELETE FROM facility_inspection")
     conn.execute("DELETE FROM facility_status")
+    conn.execute("DELETE FROM facility_accidents")
     conn.execute("DELETE FROM underground_safety")
     conn.execute("DELETE FROM sinkhole_history WHERE source_name IS NOT NULL")
     conn.execute("DELETE FROM gpr_inspection WHERE source_name IS NOT NULL")

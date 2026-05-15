@@ -113,6 +113,7 @@ def _clear_generated_regions(conn: sqlite3.Connection) -> None:
         "facility_safety",
         "facility_inspection",
         "facility_status",
+        "facility_accidents",
         "underground_safety",
         "weather_data",
         "groundwater_data",

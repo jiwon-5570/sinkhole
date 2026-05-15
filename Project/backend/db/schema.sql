@@ -397,6 +397,25 @@ CREATE TABLE IF NOT EXISTS molit_aggregate_geophysics (
     UNIQUE(source_name, source_record_id)
 );
 
+CREATE TABLE IF NOT EXISTS facility_accidents (
+    id INTEGER PRIMARY KEY,
+    region_id INTEGER,
+    occurrence_date TEXT,
+    facility_type TEXT,
+    facility_name TEXT,
+    accident_type TEXT,
+    description TEXT,
+    risk_score REAL,
+    source_name TEXT,
+    source_record_id TEXT,
+    address TEXT,
+    latitude REAL,
+    longitude REAL,
+    raw_json TEXT,
+    FOREIGN KEY (region_id) REFERENCES regions(region_id),
+    UNIQUE(source_name, source_record_id)
+);
+
 CREATE TABLE IF NOT EXISTS feature_dataset (
     region_id INTEGER,
     analysis_date TEXT,
@@ -436,6 +455,7 @@ CREATE INDEX IF NOT EXISTS idx_risk_region_date ON risk_analysis_result(region_i
 CREATE INDEX IF NOT EXISTS idx_risk_road_date ON road_risk_analysis_result(road_id, analysis_date);
 CREATE INDEX IF NOT EXISTS idx_raw_source_records_source ON raw_source_records(source_name, fetched_at);
 CREATE INDEX IF NOT EXISTS idx_public_data_collection_runs_started ON public_data_collection_runs(started_at);
+CREATE INDEX IF NOT EXISTS idx_facility_accidents_region_date ON facility_accidents(region_id, occurrence_date);
 CREATE INDEX IF NOT EXISTS idx_molit_ground_boreholes_code ON molit_ground_boreholes(borehole_code);
 CREATE INDEX IF NOT EXISTS idx_molit_ground_boreholes_coord ON molit_ground_boreholes(latitude, longitude);
 CREATE INDEX IF NOT EXISTS idx_molit_ground_boreholes_source_record ON molit_ground_boreholes(source_name, source_record_id);

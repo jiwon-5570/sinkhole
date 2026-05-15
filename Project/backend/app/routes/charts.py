@@ -148,6 +148,21 @@ def sinkhole_cause_distribution(region_id: int = Query(...), conn: sqlite3.Conne
         """,
         (region_id,),
     )
+    if not rows:
+        rows = query_all(
+            conn,
+            """
+            SELECT
+                COALESCE(NULLIF(TRIM(cause_type), ''), '미상') AS cause_type,
+                COUNT(*) AS count,
+                ROUND(COALESCE(AVG(damage_scale), 0), 2) AS avg_damage_scale,
+                'all_regions_fallback' AS scope
+            FROM sinkhole_history
+            GROUP BY COALESCE(NULLIF(TRIM(cause_type), ''), '미상')
+            ORDER BY count DESC, avg_damage_scale DESC, cause_type ASC
+            LIMIT 10
+            """,
+        )
     return ok(rows)
 
 

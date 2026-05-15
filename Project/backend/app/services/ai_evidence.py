@@ -103,6 +103,14 @@ def _join(items: list[str], *, empty: str) -> str:
     return "; ".join(items[:5]) if items else empty
 
 
+def _table_exists(conn: sqlite3.Connection, table_name: str) -> bool:
+    row = conn.execute(
+        "SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?",
+        (table_name,),
+    ).fetchone()
+    return bool(row)
+
+
 def _row_label(row: dict[str, Any], *keys: str) -> str:
     for key in keys:
         value = row.get(key)
@@ -152,7 +160,7 @@ def _factor_formula_text(factor_key: str, feature_value: float, contribution: fl
     return f"원자료 {feature_value:.1f}, 기여점수 {contribution:.1f}점입니다."
 
 
-def _facility_context(conn: sqlite3.Connection, region_id: int) -> dict[str, Any]:
+def _legacy_facility_context(conn: sqlite3.Connection, region_id: int) -> dict[str, Any]:
     status_rows = query_all(
         conn,
         """
@@ -217,6 +225,96 @@ def _facility_context(conn: sqlite3.Connection, region_id: int) -> dict[str, Any
             else "현재 확인된 세부 행은 주로 건축물/시설 단위입니다. 노후 관로가 직접 원인이라고 단정하지 말고, 관로 영향은 별도 상하수도/GPR 점검으로 확인해야 합니다."
         ),
         "rows": {"facility_status": status_rows, "facility_inspection": inspection_rows},
+    }
+
+
+def _facility_context(conn: sqlite3.Connection, region_id: int) -> dict[str, Any]:
+    status_rows = query_all(
+        conn,
+        """
+        SELECT facility_name, facility_type, address, aging_ratio, aging_count, total_count, source_name
+        FROM facility_status
+        WHERE region_id = ?
+        ORDER BY COALESCE(aging_ratio, 0) DESC, COALESCE(aging_count, 0) DESC, id ASC
+        LIMIT 5
+        """,
+        (region_id,),
+    )
+    inspection_rows = query_all(
+        conn,
+        """
+        SELECT facility_name, facility_type, address, inspection_date, diagnosis_result, risk_score, source_name
+        FROM facility_inspection
+        WHERE region_id = ?
+        ORDER BY COALESCE(risk_score, 0) DESC, inspection_date DESC, id ASC
+        LIMIT 5
+        """,
+        (region_id,),
+    )
+    accident_rows = (
+        query_all(
+            conn,
+            """
+            SELECT occurrence_date, facility_name, facility_type, accident_type, description, risk_score, address, source_name
+            FROM facility_accidents
+            WHERE region_id = ?
+            ORDER BY occurrence_date DESC, COALESCE(risk_score, 0) DESC, id ASC
+            LIMIT 5
+            """,
+            (region_id,),
+        )
+        if _table_exists(conn, "facility_accidents")
+        else []
+    )
+    summary = query_one(
+        conn,
+        """
+        SELECT
+            COUNT(*) AS row_count,
+            COALESCE(SUM(total_count), 0) AS total_count,
+            COALESCE(SUM(aging_count), 0) AS aging_count,
+            COALESCE(AVG(aging_ratio), 0) AS avg_aging_ratio
+        FROM facility_status
+        WHERE region_id = ?
+        """,
+        (region_id,),
+    ) or {}
+    status_text = _join(
+        [
+            f"{_row_label(row, 'facility_name')}({row.get('facility_type') or '-'}, {row.get('address') or '주소 없음'}, 노후비율 {_fmt(row.get('aging_ratio'))})"
+            for row in status_rows
+        ],
+        empty="facility_status에 세부 시설 행이 없습니다.",
+    )
+    inspection_text = _join(
+        [
+            f"{_row_label(row, 'facility_name')}({row.get('facility_type') or '-'}, {row.get('address') or '주소 없음'}, 점검 {row.get('inspection_date') or '-'}, 위험지표 {_fmt(row.get('risk_score'))})"
+            for row in inspection_rows
+        ],
+        empty="facility_inspection에 점검 행이 없습니다.",
+    )
+    accident_text = _join(
+        [
+            f"{row.get('occurrence_date') or '-'} {_row_label(row, 'facility_name')}({row.get('accident_type') or '-'}, {row.get('address') or '주소 없음'}, 사고위험 {_fmt(row.get('risk_score'))})"
+            for row in accident_rows
+        ],
+        empty="facility_accidents에 시설물 사고 행이 없습니다.",
+    )
+    types = {str(row.get("facility_type") or "") for row in [*status_rows, *inspection_rows, *accident_rows] if row.get("facility_type")}
+    pipe_like = any(("관" in item or "상수" in item or "하수" in item or "맨홀" in item) for item in types)
+    return {
+        "status": "confirmed" if status_rows or inspection_rows or accident_rows else "missing",
+        "summary": (
+            f"facility_status 집계는 {int(summary.get('row_count') or 0)}행, 총 {int(summary.get('total_count') or 0)}개 중 "
+            f"노후 {int(summary.get('aging_count') or 0)}개, 평균 노후비율 {_fmt(summary.get('avg_aging_ratio'))}입니다. "
+            f"노후 근거 행: {status_text}. 점검 위험도 상위 행: {inspection_text}. 시설물 사고 근거: {accident_text}."
+        ),
+        "limitation": (
+            "시설물 사고는 지반침하 사고와 분리해 시설물 노후도 보정으로만 반영합니다. 관로 사고가 확인되면 누수, 균열, 되메움 상태를 우선 점검해야 합니다."
+            if pipe_like
+            else "현재 확인된 세부 행은 시설물 단위입니다. 지반침하 직접 원인으로 단정하지 않고, 현장 점검과 GPR/상하수도 자료로 교차 확인해야 합니다."
+        ),
+        "rows": {"facility_status": status_rows, "facility_inspection": inspection_rows, "facility_accidents": accident_rows},
     }
 
 
