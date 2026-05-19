@@ -378,6 +378,70 @@ function targetRoadAddress(target) {
   return nearestKnownRoadAddress(target?.latitude, target?.longitude);
 }
 
+function topRiskRowAddress(row) {
+  const directAddress = [
+    row?.road_address,
+    row?.address,
+    row?.formatted_address,
+    row?.location_name,
+  ].find((candidate) => candidate && !looksLikeCoordinates(candidate));
+  if (directAddress) return directAddress;
+
+  if (row?.road_id) {
+    const road = state.roads.find((item) => Number(item.road_id) === Number(row.road_id));
+    const roadAddress = roadRoadAddress({
+      ...row,
+      ...road,
+      region_id: row.region_id || road?.region_id,
+      road_name: row.road_name || road?.road_name,
+      road_address: row.road_address || road?.road_address,
+    });
+    if (roadAddress && !looksLikeCoordinates(roadAddress) && roadAddress !== "도로명 주소 확인 필요") {
+      return roadAddress;
+    }
+  }
+
+  if (row?.region_id) {
+    const region = state.regions.find((item) => Number(item.region_id) === Number(row.region_id));
+    const regionAddress = regionRoadAddress({
+      ...row,
+      ...region,
+      region_id: row.region_id || region?.region_id,
+      region_name: row.region_name || region?.region_name,
+      road_address: row.road_address || region?.road_address,
+    });
+    if (regionAddress && !looksLikeCoordinates(regionAddress) && regionAddress !== "도로명 주소 확인 필요") {
+      return regionAddress;
+    }
+  }
+
+  const latitude = row?.latitude ?? row?.center_lat ?? row?.lat;
+  const longitude = row?.longitude ?? row?.center_lon ?? row?.lng ?? row?.lon;
+  const nearest = nearestKnownRoadAddress(latitude, longitude);
+  if (nearest && nearest !== "도로명 주소 확인 필요") return nearest;
+  return row?.road_name || row?.region_name || row?.name || row?.label || "";
+}
+
+function setLocationSearchFromTopRisk(row) {
+  const address = topRiskRowAddress(row);
+  if (!address || address === "도로명 주소 확인 필요") return "";
+
+  const latitude = Number(row?.latitude ?? row?.center_lat ?? row?.lat);
+  const longitude = Number(row?.longitude ?? row?.center_lon ?? row?.lng ?? row?.lon);
+  state.liveLocation = {
+    ...state.liveLocation,
+    name: address,
+    address,
+    road_address: address,
+    formatted_address: address,
+    location_name: address,
+    latitude: Number.isFinite(latitude) ? latitude : state.liveLocation.latitude,
+    longitude: Number.isFinite(longitude) ? longitude : state.liveLocation.longitude,
+  };
+  if (el.liveLocationInput) el.liveLocationInput.value = address;
+  return address;
+}
+
 async function reverseGeocodeAddress(latitude, longitude) {
   const fallback = nearestKnownRoadAddress(latitude, longitude);
   try {
@@ -653,6 +717,9 @@ function renderTopRisk(rows = []) {
     const score = Number(row.total_risk_score || 0);
     const meta = riskMeta(row.risk_level, score);
     const tr = document.createElement("tr");
+    const rowAddress = topRiskRowAddress(row);
+    tr.style.cursor = "pointer";
+    if (rowAddress) tr.title = `클릭하면 위치 검색창에 입력됩니다: ${rowAddress}`;
     tr.innerHTML = `
       <td>${escapeHtml(row.priority_rank ?? index + 1)}</td>
       <td>${escapeHtml(row.road_name || row.region_name || "-")}</td>
@@ -660,6 +727,7 @@ function renderTopRisk(rows = []) {
       <td><span class="tag ${riskFillClass(meta)}">${escapeHtml(meta.label)}</span></td>
     `;
     tr.addEventListener("click", async () => {
+      let selectedAddress = setLocationSearchFromTopRisk(row);
       if (row.road_id) {
         el.analysisType.value = "road";
         updateAnalysisTypeControls();
@@ -667,15 +735,19 @@ function renderTopRisk(rows = []) {
           state.selectedRegionId = Number(row.region_id);
           el.regionSelect.value = String(row.region_id);
           await loadRoads(row.region_id);
+          selectedAddress = setLocationSearchFromTopRisk(row) || selectedAddress;
         }
         state.selectedRoadId = Number(row.road_id);
         if (el.roadSelect) el.roadSelect.value = String(row.road_id);
+        selectedAddress = setLocationSearchFromTopRisk(row) || selectedAddress;
         await runRoadAnalysis();
       } else if (row.region_id) {
         state.selectedRegionId = Number(row.region_id);
         el.regionSelect.value = String(row.region_id);
+        selectedAddress = setLocationSearchFromTopRisk(row) || selectedAddress;
         await runScenarioAnalysis();
       }
+      if (selectedAddress && el.liveLocationInput) el.liveLocationInput.value = selectedAddress;
     });
     el.topRiskBody.appendChild(tr);
   });
@@ -2880,7 +2952,7 @@ window.__sinkholeActions = {
   closeAiChat,
 };
 window.__sinkholeAppReady = true;
-window.__sinkholeAssetVersion = "20260514-help-update";
+window.__sinkholeAssetVersion = "20260519-top5-location-fill";
 
 bootstrap().catch((error) => {
   console.error(error);
