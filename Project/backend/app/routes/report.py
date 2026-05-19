@@ -17,8 +17,9 @@ from app.services.features import (
     resolve_analysis_date,
     today_str,
 )
+from app.services.ai_evidence import build_evidence_context
 from app.services.report_pdf import safe_slug, write_pdf
-from app.services.reporting import cached_report, generate_report_with_gemini, store_report, template_report
+from app.services.reporting import cached_report, store_report, template_report
 from app.services.risk_scoring import risk_level, score_rule_based
 from app.utils.response import fail, ok
 
@@ -362,6 +363,8 @@ def generate_report(req: GenerateReportRequest, conn: sqlite3.Connection = Depen
         (req.region_id,)
     )
     features, analysis, breakdown_data, trend_data, history_cause = _build_report_context(conn, req.region_id, analysis_date)
+    report_payload = {"features": features, "breakdown": breakdown_data, "analysis": analysis}
+    evidence_context = build_evidence_context(conn, region, report_payload, analysis_date)
     cached = cached_report(conn, req.region_id, analysis_date)
 
     if cached:
@@ -389,12 +392,18 @@ def generate_report(req: GenerateReportRequest, conn: sqlite3.Connection = Depen
             }
         )
 
-    try:
-        text = generate_report_with_gemini(region=region, analysis=analysis, breakdown=breakdown_data, features=features)
-        source = "gemini"
-    except Exception:
-        text = template_report(region=region, analysis=analysis, breakdown=breakdown_data)
-        source = "template"
+    text = template_report(
+        region=region,
+        analysis=analysis,
+        breakdown=breakdown_data,
+        features=features,
+        evidence_context=evidence_context,
+        trend_data=trend_data,
+        history_cause=history_cause,
+        analysis_local_time=analysis_local_time,
+        language=req.language or "ko",
+    )
+    source = "professional-template"
 
     store_report(conn, req.region_id, analysis_date, text)
     pdf = _write_pdf(

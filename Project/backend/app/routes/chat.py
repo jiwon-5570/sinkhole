@@ -29,12 +29,28 @@ router = APIRouter()
 ACTION_BY_FACTOR = {
     "past_sinkhole": "과거 침하 지점 주변의 반복 침하 여부를 확인하고, 같은 구간은 점검 주기를 단축해야 합니다.",
     "gpr": "GPR 재탐사로 공동 위치와 규모를 다시 확인한 뒤 이상 신호가 큰 구간부터 보수해야 합니다.",
-    "facility": "노후 관로와 지하시설물의 누수, 균열, 접합부 이상을 우선 점검해 시설물 노후도 점수를 낮춰야 합니다.",
+    "facility": "노후 건축물·지하시설물 주변의 하수관, 맨홀, 지하매설물, 배수 상태, 누수·균열 흔적을 함께 점검하고 확인된 결함부터 보수해 시설물 노후도 점수를 낮춰야 합니다.",
     "rainfall": "강우 직후 배수 상태와 지표면 균열을 확인하고, 배수 불량 지점을 보수해야 합니다.",
     "groundwater": "지하수위 급변 구간은 수위 센서와 현장 점검을 연계해 지반 약화 가능성을 줄여야 합니다.",
     "environment": "도로와 건물 밀집도가 높은 구간은 교통 하중과 지하 매설물 집중도를 함께 관리해야 합니다.",
     "construction": "공사장 인접 구간은 굴착 깊이, 흙막이 상태, 진동 기록을 관리해 공사 영향 점수를 낮춰야 합니다.",
 }
+
+MANAGEMENT_TERMS = (
+    "관리",
+    "대응",
+    "낮추",
+    "줄이",
+    "조치",
+    "개선",
+    "보수",
+    "정비",
+    "점검",
+    "어디서부터",
+    "어떻게 해야",
+    "방법",
+    "방안",
+)
 
 REGION_ROAD_ADDRESSES = {
     900001: "서울특별시 강동구 천호대로 1095 인근",
@@ -295,6 +311,13 @@ def _factor_key_from_message(message: str) -> str | None:
         if any(_normalize(keyword) in normalized for keyword in keywords):
             return key
     return None
+
+
+def _is_management_question(message: str) -> bool:
+    normalized = _normalize(message)
+    if not normalized:
+        return False
+    return any(_normalize(term) in normalized for term in MANAGEMENT_TERMS)
 
 
 def _is_factor_detail_question(message: str) -> bool:
@@ -729,13 +752,19 @@ def _reason_answer(target: dict[str, Any] | None, payload: dict[str, Any] | None
     )
 
 
-def _management_answer(target: dict[str, Any] | None, payload: dict[str, Any] | None) -> str:
+def _management_answer(
+    target: dict[str, Any] | None,
+    payload: dict[str, Any] | None,
+    factor_key: str | None = None,
+    evidence_context: dict[str, Any] | None = None,
+) -> str:
     if not target or not payload:
         return "관리 방안을 설명할 대상 지역을 찾지 못했습니다. 현재는 상위 위험 지역을 기준으로 답변하는 방식이 가장 정확합니다."
     analysis = payload.get("analysis") or {}
     factors = _top_factors(payload)
     breakdown = payload.get("breakdown") or {}
     features = payload.get("features") or {}
+    evidence_context = evidence_context or {}
     cards = payload.get("reason_cards") or []
     top_factor_names = [FACTOR_LABELS.get(key, key) for key, _ in factors]
     data_basis = [
@@ -750,6 +779,39 @@ def _management_answer(target: dict[str, Any] | None, payload: dict[str, Any] | 
     first_card = str((cards[0] if cards else {}).get("body") or "")
     if len(first_card) > 180:
         first_card = first_card[:180].rstrip() + "..."
+    if factor_key and factor_key in FACTOR_LABELS:
+        label = FACTOR_LABELS.get(factor_key, factor_key)
+        feature_key = FACTOR_FEATURE_KEYS.get(factor_key, "")
+        contribution = _num(breakdown.get(factor_key))
+        raw_value = _fmt(features.get(feature_key)) if feature_key else "-"
+        evidence = evidence_context.get(factor_key) or {}
+        formula = str(evidence.get("formula") or "").strip()
+        summary = str(evidence.get("summary") or "").strip()
+        limitation = str(evidence.get("limitation") or "").strip()
+        status = str(evidence.get("status") or "missing")
+        status_label = {
+            "confirmed": "직접 원자료 반영",
+            "estimated": "대체 지표 기반 추정",
+            "missing": "직접 원자료 부족",
+        }.get(status, status)
+        action = ACTION_BY_FACTOR.get(factor_key) or "상위 기여 요인의 원자료를 현장 확인한 뒤 원인이 확인된 항목부터 보수해야 합니다."
+        if not summary:
+            summary = "현재 DB에서 이 항목의 세부 원자료 설명을 찾지 못했습니다. 따라서 확인되지 않은 시설명이나 원인은 만들지 않습니다."
+        if not limitation:
+            limitation = "확인되지 않은 원인은 확정하지 말고, 현장 점검과 원자료 갱신 후 재분석해야 합니다."
+        return (
+            f"{_address_label(target)}의 {label} 관리는 다음 순서로 진행하는 것이 좋습니다. "
+            f"현재 종합 점수는 {_fmt(analysis.get('total_risk_score'))}/100점, 등급은 {analysis.get('risk_level') or '-'}이고 "
+            f"{label} 기여점수는 {contribution:.1f}점입니다. 원자료 지표는 {raw_value}이며 근거 상태는 {status_label}입니다.\n\n"
+            f"점수가 높게 나온 이유: {formula or summary}\n"
+            f"실제 데이터 근거: {summary}\n\n"
+            "관리 방법:\n"
+            f"1. 우선 확인: {label} 관련 원자료에 나온 위치와 시설을 현장에서 먼저 확인합니다.\n"
+            f"2. 조치 방향: {action}\n"
+            "3. 점수 저감: 보수·정비가 끝난 뒤 같은 분석일 기준으로 데이터를 갱신하고 재분석해 해당 기여점수가 내려갔는지 확인합니다.\n"
+            "4. 모니터링: 조치 전후 24~72시간 동안 포장 처짐, 균열, 누수, 배수 불량, 지하수 변동을 같이 확인합니다.\n\n"
+            f"주의: {limitation}"
+        )
     return (
         f"{_address_label(target)}의 점수를 낮추려면 점수 기여도가 큰 항목부터 처리해야 합니다. "
         f"현재 점수는 {_fmt(analysis.get('total_risk_score'))}/100점, 등급은 {analysis.get('risk_level') or '-'}이고 "
@@ -922,6 +984,7 @@ def _local_chat_answer(
     target: dict[str, Any] | None,
     payload: dict[str, Any] | None,
     conn: sqlite3.Connection | None = None,
+    evidence_context: dict[str, Any] | None = None,
 ) -> str:
     lower = message.lower()
     if conn is not None and _is_definition_question(message):
@@ -930,14 +993,16 @@ def _local_chat_answer(
             return answer
     if _contains(lower, ("목적", "뭐하는", "무슨 프로그램", "사용 목적", "시스템 설명")):
         return _purpose_answer(summary, top_rows, analysis_date)
+    elif _is_management_question(message):
+        return _management_answer(target, payload, factor_key=_factor_key_from_message(message), evidence_context=evidence_context)
     elif conn is not None and is_evidence_question(message):
         return build_factor_evidence_answer(conn, message, target, payload, analysis_date, _address_label(target))
     elif _contains(lower, ("전체", "현황", "요약", "상황", "현재 상태")) and not _contains(lower, ("이유", "왜")):
         return _overview_answer(summary, top_rows, analysis_date)
     elif _contains(lower, ("어디", "가장", "최고", "높은 곳", "위험지역", "위험 지역")) and not _contains(lower, ("이유", "왜", "원인", "근거")):
         return _top_region_answer(top_rows, analysis_date, payload)
-    elif _contains(lower, ("관리", "대응", "낮추", "줄이", "조치", "개선", "점수", "보수", "정비", "어디서부터", "어떻게 해야")):
-        return _management_answer(target, payload)
+    elif _contains(lower, MANAGEMENT_TERMS):
+        return _management_answer(target, payload, factor_key=_factor_key_from_message(message), evidence_context=evidence_context)
     elif _contains(lower, ("이유", "왜", "원인", "근거", "판단")):
         return _reason_answer(target, payload)
     elif conn is not None and _contains(lower, ("자료", "데이터", "출처", "원천", "공공데이터", "api", "api키", "테이블", "정규데이터")):
@@ -951,9 +1016,9 @@ def _requires_verified_local_answer(message: str) -> bool:
     lower = message.lower()
     if _is_definition_question(message):
         return True
-    if is_evidence_question(message):
+    if _is_management_question(message):
         return True
-    if _contains(lower, ("관리", "대응", "낮추", "줄이", "조치", "개선", "점수", "보수", "정비", "어디서부터", "어떻게 해야")):
+    if is_evidence_question(message):
         return True
     return _contains(
         lower,
@@ -1097,7 +1162,16 @@ def ai_chat(req: AiChatRequest, conn: sqlite3.Connection = Depends(get_db)) -> d
     target = _target_region(conn, req, top_rows)
     payload = _region_payload(conn, int(target["region_id"]), analysis_date) if target else None
     evidence_context = build_evidence_context(conn, target, payload, analysis_date)
-    local_answer = _local_chat_answer(message, summary, top_rows, analysis_date, target, payload, conn)
+    local_answer = _local_chat_answer(
+        message,
+        summary,
+        top_rows,
+        analysis_date,
+        target,
+        payload,
+        conn,
+        evidence_context=evidence_context,
+    )
 
     engine = "local_fallback"
     fallback_reason = None
