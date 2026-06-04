@@ -1,565 +1,281 @@
-# 06_API_설계_가이드.md
+# 06_API_설계_가이드
 
-# 국토안전관리 프로젝트 API 설계 가이드
+## 1. 목적
 
-## 1. 문서 목적
+이 문서는 FastAPI 백엔드의 API 구조, 응답 형식, 주요 엔드포인트, 확장 기준을 설명한다. 현재 API는 `Project/backend/app/routes`에 기능별 라우터로 분리되어 있다.
 
-이 문서는 국토안전관리 프로젝트에서 사용할 API 구조를 정의한다.
+## 2. 기본 구조
 
-본 가이드는 다음을 목표로 한다.
+앱 진입점:
 
-1. 프론트엔드와 백엔드가 공통으로 참조할 API 명세를 제공한다.
-2. 화면별로 필요한 데이터 흐름을 명확히 한다.
-3. 위험 분석, 지도 시각화, 그래프 출력, 리포트 생성까지 연결 가능한 API 구조를 설계한다.
-4. 향후 확장 가능한 REST API 형태를 유지한다.
+```text
+Project/backend/app/main.py
+```
 
----
+공통 DB 의존성:
 
-## 2. API 설계 기본 원칙
+```text
+Project/backend/app/main_deps.py
+```
 
-### 2.1 RESTful 구조 유지
-- 리소스 중심 URL 설계
-- GET / POST 역할 명확히 구분
-- 응답은 JSON 중심
+공통 응답 helper:
 
-### 2.2 화면 중심 설계
-API는 DB 구조만 반영하면 안 되고,  
-**대시보드 / 지도 / 상세 분석 / 리포트 화면**이 실제로 필요로 하는 데이터 단위로 설계해야 한다.
+```text
+Project/backend/app/utils/response.py
+```
 
-### 2.3 결과 재사용성 확보
-위험 분석 결과는 매번 실시간 계산만 하지 않고,  
-가능하면 DB에 저장된 결과를 재사용할 수 있도록 한다.
+라우터 등록은 `create_app()`에서 수행한다.
 
-### 2.4 생성형 AI와 예측 API 분리
-- 예측 결과 API
-- 설명 리포트 API
-를 분리한다.
+## 3. 응답 형식
 
----
-
-## 3. 전체 API 분류
-
-전체 API는 다음 6개 그룹으로 분류한다.
-
-1. 공통/기준 정보 API
-2. 지역/지도 API
-3. 위험 분석 API
-4. 그래프/대시보드 API
-5. 비교 분석 API
-6. AI 리포트 API
-
----
-
-## 4. 공통 응답 규칙
-
-## 4.1 성공 응답 구조
+성공 응답:
 
 ```json
 {
   "success": true,
-  "message": "요청이 정상적으로 처리되었습니다.",
+  "message": "OK",
   "data": {}
 }
-4.2 실패 응답 구조
+```
+
+실패 응답:
+
+```json
 {
   "success": false,
   "message": "데이터를 찾을 수 없습니다.",
   "error_code": "NOT_FOUND"
 }
-4.3 권장 규칙
-success: Boolean
-message: 사용자 또는 개발자 확인용 메시지
-data: 실제 응답 데이터
-error_code: 실패 시 구분 코드
-5. 공통/기준 정보 API
-5.1 지역 목록 조회
-목적
-지역 선택 드롭다운
-검색 자동완성
-지도 초기 데이터 로드
-Endpoint
+```
 
-GET /api/regions
+UI의 `api()` helper는 `success=false`를 오류로 처리한다.
 
-Query Parameters
-region_type (optional)
-sido (optional)
-sigungu (optional)
-응답 예시
-{
-  "success": true,
-  "data": [
-    {
-      "region_id": 101,
-      "region_name": "부산광역시 해운대구",
-      "region_type": "sigungu",
-      "latitude": 35.1631,
-      "longitude": 129.1635
-    }
-  ]
-}
-5.2 특정 지역 기본 정보 조회
-목적
-상세 분석 화면의 기본 지역 정보 제공
-Endpoint
+## 4. 인증
 
-GET /api/region/{region_id}
+운영 환경에서는 Basic Auth를 사용할 수 있다.
 
-응답 예시
-{
-  "success": true,
-  "data": {
-    "region_id": 101,
-    "region_name": "부산광역시 해운대구",
-    "region_type": "sigungu",
-    "sido": "부산광역시",
-    "sigungu": "해운대구",
-    "latitude": 35.1631,
-    "longitude": 129.1635
-  }
-}
-6. 지도 관련 API
-6.1 위험도 지도 레이어 조회
-목적
-위험 예측 지도 화면 표시
-Endpoint
+환경 변수:
 
-GET /api/map/risk-layer
+```env
+SINKHOLE_ENABLE_BASIC_AUTH=1
+SINKHOLE_BASIC_AUTH_USERNAME=...
+SINKHOLE_BASIC_AUTH_PASSWORD=...
+```
 
-Query Parameters
-date
-layer_type
-base_risk
-total_risk
-rainfall_risk
-groundwater_risk
-gpr_layer
-risk_level (optional)
-sido (optional)
-응답 예시
-{
-  "success": true,
-  "data": [
-    {
-      "region_id": 101,
-      "region_name": "부산광역시 해운대구",
-      "latitude": 35.1631,
-      "longitude": 129.1635,
-      "risk_score": 82,
-      "risk_level": "매우 높음"
-    }
-  ]
-}
-6.2 GPR 탐사 결과 레이어 조회
-목적
-지도에 GPR 탐사 또는 공동탐지 레이어 표시
-Endpoint
+개발 환경에서는 기본 비활성화다.
 
-GET /api/map/gpr-layer
+## 5. 주요 API 목록
 
-Query Parameters
-date_from
-date_to
-detected_only (optional)
-응답 예시
-{
-  "success": true,
-  "data": [
-    {
-      "region_id": 101,
-      "inspection_date": "2026-04-01",
-      "cavity_detected": true,
-      "cavity_count": 2,
-      "latitude": 35.1631,
-      "longitude": 129.1635
-    }
-  ]
-}
-6.3 위험 핫스팟 조회
-목적
-우선 점검 또는 고위험 지점 마커 표시
-Endpoint
+### 5.1 상태/설정
 
-GET /api/map/hotspots
-
-Query Parameters
-top_n (default=10)
-risk_level (optional)
-응답 예시
-{
-  "success": true,
-  "data": [
-    {
-      "region_id": 101,
-      "region_name": "부산광역시 해운대구",
-      "risk_score": 89,
-      "risk_level": "매우 높음",
-      "priority_rank": 1
-    }
-  ]
-}
-7. 위험 분석 API
-7.1 특정 지역 위험 분석 실행
-목적
-지역별 종합 위험도 계산
-상세 분석 화면 및 리포트 생성의 핵심 API
-Endpoint
-
-POST /api/analyze-risk
-
-요청 예시
-{
-  "region_id": 101,
-  "analysis_date": "2026-04-19",
-  "language": "Japanese" // 선택 사항. 기본값: "한국어". "English", "Japanese" 등 AI 모델이 지원하는 언어 사용 가능.
-}
-응답 예시
-{
-  "success": true,
-  "data": {
-    "region_id": 101,
-    "analysis_date": "2026-04-19",
-    "base_risk_score": 58,
-    "weather_score": 10,
-    "groundwater_score": 7,
-    "environment_score": 5,
-    "construction_score": 2,
-    "total_risk_score": 82,
-    "risk_level": "매우 높음",
-    "risk_change_signal": "increasing",
-    "priority_rank": 1
-  }
-}
-7.2 저장된 분석 결과 조회
-목적
-이미 수행된 분석 결과를 재사용
-지도/상세 분석/리포트에 공통 제공
-Endpoint
-
-GET /api/analysis/{region_id}
-
-Query Parameters
-analysis_date (optional)
-응답 예시
-{
-  "success": true,
-  "data": {
-    "region_id": 101,
-    "region_name": "부산광역시 해운대구",
-    "analysis_date": "2026-04-19",
-    "base_risk_score": 58,
-    "weather_score": 10,
-    "groundwater_score": 7,
-    "environment_score": 5,
-    "construction_score": 2,
-    "total_risk_score": 82,
-    "risk_level": "매우 높음",
-    "risk_change_signal": "increasing",
-    "priority_rank": 1
-  }
-}
-7.3 우선 점검 대상지 조회
-목적
-대시보드 TOP 5
-우선 점검 순위 표
-Endpoint
-
-GET /api/top-risk-regions
-
-Query Parameters
-top_n (default=5)
-date
-sido (optional)
-응답 예시
-{
-  "success": true,
-  "data": [
-    {
-      "region_id": 101,
-      "region_name": "부산광역시 해운대구",
-      "risk_score": 89,
-      "risk_level": "매우 높음",
-      "priority_rank": 1,
-      "risk_reason": "과거 사고 이력 및 최근 강우량 증가"
-    }
-  ]
-}
-8. 그래프/대시보드 API
-8.1 위험등급 분포 조회
-목적
-도넛 차트 출력
-Endpoint
-
-GET /api/charts/risk-distribution
-
-Query Parameters
-date
-sido (optional)
-응답 예시
-{
-  "success": true,
-  "data": {
-    "low": 120,
-    "normal": 85,
-    "high": 32,
-    "very_high": 10
-  }
-}
-8.2 위험도 추이 조회
-목적
-선그래프 출력
-시간별 변화 확인
-Endpoint
-
-GET /api/charts/risk-trend
-
-Query Parameters
-region_id
-date_from
-date_to
-응답 예시
-{
-  "success": true,
-  "data": [
-    {
-      "date": "2026-04-01",
-      "risk_score": 61
-    },
-    {
-      "date": "2026-04-08",
-      "risk_score": 67
-    },
-    {
-      "date": "2026-04-15",
-      "risk_score": 82
-    }
-  ]
-}
-8.3 변수 기여도 조회
-목적
-feature importance / SHAP 기반 그래프 출력
-Endpoint
-
-GET /api/charts/factor-importance
-
-Query Parameters
-region_id
-analysis_date
-응답 예시
-{
-  "success": true,
-  "data": [
-    {
-      "factor": "과거 사고 이력",
-      "score": 0.35
-    },
-    {
-      "factor": "최근 7일 강우량",
-      "score": 0.22
-    },
-    {
-      "factor": "지하수위 변동",
-      "score": 0.14
-    },
-    {
-      "factor": "GPR 공동 탐지",
-      "score": 0.18
-    },
-    {
-      "factor": "공사 요인",
-      "score": 0.03
-    }
-  ]
-}
-
-주의:
-공사 요인은 항상 낮은 비중의 보조 factor로만 표현
-
-8.4 우선 점검 순위 표 조회
-목적
-표 형태 실무용 데이터 제공
-Endpoint
-
-GET /api/charts/top-priority
-
-Query Parameters
-date
-top_n
-sido (optional)
-응답 예시
-{
-  "success": true,
-  "data": [
-    {
-      "priority_rank": 1,
-      "region_name": "부산광역시 해운대구",
-      "risk_score": 89,
-      "risk_level": "매우 높음",
-      "main_reason": "과거 사고 밀도와 최근 강우 증가"
-    }
-  ]
-}
-9. 비교 분석 API
-9.1 두 지역 비교 분석
-목적
-지역 비교 화면
-발표 시 비교 설명
-Endpoint
-
-POST /api/compare-regions
-
-요청 예시
-{
-  "region_a_id": 101,
-  "region_b_id": 205,
-  "analysis_date": "2026-04-19"
-}
-응답 예시
-{
-  "success": true,
-  "data": {
-    "region_a": {
-      "region_id": 101,
-      "region_name": "부산광역시 해운대구",
-      "risk_score": 82,
-      "risk_level": "매우 높음"
-    },
-    "region_b": {
-      "region_id": 205,
-      "region_name": "부산광역시 사하구",
-      "risk_score": 61,
-      "risk_level": "높음"
-    },
-    "comparison": {
-      "score_diff": 21,
-      "main_difference": "과거 사고 이력 및 GPR 탐사 결과 차이"
-    }
-  }
-}
-10. AI 리포트 API
-10.1 AI 요약 리포트 생성
-목적
-상세 분석 화면
-리포트 화면
-PDF 출력용 설명문 생성
-Endpoint
-
-POST /api/generate-report
-
-요청 예시
-{
-  "region_id": 101,
-  "analysis_date": "2026-04-19",
-  "language": "English" // 선택 사항, 기본값: "한국어"
-}
-응답 예시
-{
-  "success": true,
-  "data": {
-    "summary_text": "이 지역은 과거 지반침하 이력과 GPR 탐사 결과를 기준으로 기본 취약성이 존재하며, 최근 강우량 증가와 지하수위 변동이 겹쳐 위험 상승 가능성이 높습니다.",
-    "inspection_recommendation_text": "우선 점검 대상지로 분류되며, GPR 재탐사 및 시설물 점검이 권고됩니다."
-  }
-}
-10.2 저장된 AI 리포트 조회
-목적
-리포트 재사용
-상세 화면 렌더링 속도 향상
-Endpoint
-
-GET /api/report/{region_id}
-
-Query Parameters
-analysis_date
-응답 예시
-{
-  "success": true,
-  "data": {
-    "region_id": 101,
-    "analysis_date": "2026-04-19",
-    "summary_text": "위험 원인 요약...",
-    "inspection_recommendation_text": "점검 권고..."
-  }
-}
-11. API 상태/헬스 체크
-11.1 서버 상태 확인
-Endpoint
-
+```text
 GET /api/health
+GET /api/app-config
+GET /api/summary
+```
 
-응답 예시
+`/api/app-config`는 Google Maps 노출 설정, 기본 모드, 시나리오 중심 위치를 반환한다. API 키는 `SINKHOLE_EXPOSE_GOOGLE_MAPS_KEY=1`일 때만 반환한다.
+
+### 5.2 분석 대상
+
+```text
+GET /api/regions
+GET /api/region/{region_id}
+GET /api/roads
+GET /api/road/{road_id}
+```
+
+`/api/roads`는 `region_id` query를 받을 수 있다. 도로 데이터가 없으면 빈 배열을 반환한다.
+
+### 5.3 위험 분석
+
+```text
+POST /api/analyze-risk
+POST /api/analyze-road-risk
+GET  /api/analysis/{region_id}
+GET  /api/top-risk-regions
+GET  /api/top-risk-roads
+```
+
+지역 분석 request:
+
+```json
 {
-  "success": true,
-  "message": "API server is running"
+  "region_id": 900002,
+  "analysis_date": "2026-05-20",
+  "client_local_datetime": "2026-05-20T12:44:00",
+  "client_timezone": "Asia/Seoul",
+  "client_utc_offset_minutes": 540
 }
-12. API 설계와 화면 연결표
-화면	주요 API
-대시보드	/api/top-risk-regions, /api/charts/risk-distribution, /api/charts/risk-trend
-위험 지도	/api/map/risk-layer, /api/map/hotspots, /api/map/gpr-layer
-상세 분석	/api/analysis/{region_id}, /api/charts/factor-importance, /api/generate-report
-비교 분석	/api/compare-regions
-리포트	/api/report/{region_id}, /api/generate-report
-13. 에러 처리 기준
-13.1 공통 에러 코드 예시
-NOT_FOUND
-INVALID_REQUEST
-DB_ERROR
-ANALYSIS_ERROR
-AI_REPORT_ERROR
-13.2 권장 처리 방식
-프론트에서는 success=false일 때 에러 메시지 출력
-백엔드에서는 반드시 try/except 처리
-생성형 AI 실패 시에도 분석 결과는 제공되도록 설계
-14. 캐싱 및 저장 전략
+```
 
-분석 결과와 리포트는 가능하면 저장해두고 재사용한다.
+분석 응답은 다음을 포함한다.
 
-저장 권장 대상
-risk_analysis_result
-ai_reports
-이유
-매번 재분석 비용 절감
-지도 렌더링 속도 개선
-리포트 생성 속도 개선
-15. 보안 및 운영 고려
-15.1 API 키 보호
-Gemini API 키는 서버 환경변수로 관리
-프론트에 직접 노출 금지
-15.2 CORS 설정
-React 프론트와 Flask/FastAPI 간 통신 허용 필요
-15.3 Rate limiting (선택)
-AI 리포트 API 과호출 방지
-16. 개발자 체크리스트
-공통
- success/message/data 구조 통일
- 에러 응답 구조 통일
-지역/지도
- regions 조회 가능
- risk-layer 조회 가능
- hotspots 조회 가능
-분석
- analyze-risk 동작
- analysis 조회 가능
- top-risk-regions 동작
-그래프
- risk-distribution 동작
- risk-trend 동작
- factor-importance 동작
-AI
- generate-report 동작
- report 조회 가능
-17. 최종 요약
+- `region` 또는 `road`
+- `analysis`
+- `features`
+- `breakdown`
+- `reason_cards`
 
-이 프로젝트의 API는 단순 DB 조회 API가 아니라,
-지도 화면 / 그래프 화면 / 상세 분석 화면 / 리포트 화면이 직접 사용할 수 있는 서비스형 API로 설계해야 한다.
+### 5.4 지도/지오코딩
 
-핵심 구조는 다음과 같다.
+```text
+GET /api/geocode/search
+GET /api/geocode/reverse
+GET /api/map/risk-layer
+GET /api/map/gpr-layer
+GET /api/map/hotspots
+```
 
-지역/지도 API
-위험 분석 API
-그래프 API
-비교 분석 API
-AI 리포트 API
+검색은 로컬 분석 대상과 주소/좌표 fallback을 조합한다.
 
-즉, API 설계는
-데이터 → 분석 → 시각화 → 설명
-전체 흐름을 연결하는 핵심 계층이다.
+### 5.5 차트
+
+```text
+GET /api/charts/risk-distribution
+GET /api/charts/risk-trend
+GET /api/charts/factor-importance
+GET /api/charts/top-priority
+GET /api/charts/sinkhole-cause-distribution
+GET /api/charts/sinkhole-occurrence-trend
+```
+
+지역별 데이터가 부족한 경우 일부 차트는 전체 지역 fallback을 제공할 수 있다.
+
+### 5.6 비교 분석
+
+```text
+POST /api/compare-regions
+```
+
+request:
+
+```json
+{
+  "region_ids": [900001, 900002],
+  "analysis_date": "2026-05-20"
+}
+```
+
+### 5.7 What-If 시뮬레이션
+
+```text
+POST /api/simulate-risk
+```
+
+request는 `WhatIfRequest` 모델을 따른다.
+
+주요 필드:
+
+- `scenario_preset`
+- `forecast_horizon_hours`
+- `extra_rainfall_mm`
+- `groundwater_delta_m`
+- `is_major_construction`
+- `excavation_depth_m`
+- `construction_distance_m`
+- `gpr_anomaly_count`
+- `facility_aging_delta`
+- `past_sinkhole_delta_count`
+- `environment_delta_score`
+- `mitigation_*`
+- `target_region_id`
+
+### 5.8 AI Chat
+
+```text
+POST /api/ai-chat
+```
+
+request:
+
+```json
+{
+  "message": "현재 가장 위험한 지역은 어디야?",
+  "history": [
+    {"role": "user", "content": "..."}
+  ]
+}
+```
+
+Gemini API 키가 없거나 로컬 검증 질문인 경우 규칙 기반 로컬 답변을 생성한다.
+
+### 5.9 리포트/PDF
+
+```text
+POST /api/generate-report
+GET  /api/report/{region_id}
+GET  /api/reports
+GET  /api/reports/files/{file_name}
+POST /api/reports/delete
+```
+
+PDF 파일은 `SINKHOLE_REPORTS_DIR` 또는 기본 `Project/backend/data/reports`에 저장된다.
+
+### 5.10 모니터링 지점
+
+```text
+GET    /api/monitoring-points
+POST   /api/monitoring-points
+POST   /api/monitoring-points/refresh
+DELETE /api/monitoring-points/{point_id}
+```
+
+최대 개수는 `SINKHOLE_MONITORING_POINTS_MAX_COUNT`로 제어한다.
+
+### 5.11 공공데이터
+
+```text
+GET  /api/public-data/status
+POST /api/public-data/refresh
+GET  /api/public-data/seoul/status
+POST /api/public-data/seoul/import
+GET  /api/public-data/local-construction/status
+POST /api/public-data/local-construction/import
+GET  /api/public-data/ground-layers/status
+```
+
+데이터 갱신 API는 실행 시간이 길 수 있으므로 UI에서는 상태 표시와 timeout을 고려한다.
+
+### 5.12 현장/상업 위치 분석
+
+```text
+POST /api/commercial/analyze
+POST /api/commercial/report
+```
+
+주소, 장소명, 좌표 기반으로 주변 분석 지점과 날씨/위험 근거를 조합한다.
+
+## 6. API 추가 기준
+
+새 API를 추가할 때는 다음을 지킨다.
+
+- 라우터 파일을 기능 단위로 유지한다.
+- request body는 `app/models/schemas.py`에 Pydantic 모델로 정의한다.
+- DB 연결은 `Depends(get_db)`를 사용한다.
+- 응답은 `ok()` 또는 `fail()`을 사용한다.
+- 날짜 입력은 `resolve_analysis_date()` 기준을 따른다.
+- API 키나 민감 정보는 응답에 노출하지 않는다.
+- UI에서 빈 배열과 null 값을 안전하게 처리할 수 있도록 기본값을 제공한다.
+
+## 7. 오류 처리 기준
+
+- 대상이 없으면 `NOT_FOUND`
+- 입력이 잘못되면 Pydantic validation 사용
+- 외부 API 실패는 수집 상태에 오류로 기록하되 서비스 전체 장애로 전파하지 않는다.
+- 파일 접근 오류는 메시지를 짧게 정리해 응답한다.
+- API 키는 오류 메시지에서 redaction한다.
+
+## 8. 문서 확인
+
+서버 실행 후 Swagger 문서:
+
+```text
+http://127.0.0.1:5000/docs
+```
+
+OpenAPI JSON:
+
+```text
+http://127.0.0.1:5000/openapi.json
+```

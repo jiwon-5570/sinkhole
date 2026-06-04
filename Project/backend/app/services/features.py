@@ -6,6 +6,11 @@ import sqlite3
 
 from app.db.core import query_one
 from app.services.ground_layers import summarize_ground_layers_for_region, summarize_ground_layers_for_road
+from app.services.risk_scoring import FACTOR_MAX_SCORES
+
+
+GROUNDWATER_MAX_SCORE = FACTOR_MAX_SCORES["groundwater"]
+ENVIRONMENT_MAX_SCORE = FACTOR_MAX_SCORES["environment"]
 
 
 def today_str() -> str:
@@ -97,10 +102,10 @@ def _molit_groundwater_score_near(
     avg_depth = float((row or {}).get("avg_depth_m") or 0.0)
     shallow_count = int((row or {}).get("shallow_count") or 0)
     shallow_ratio = shallow_count / count if count else 0.0
-    depth_component = max(0.0, 8.0 - min(avg_depth, 8.0))
+    depth_component = max(0.0, GROUNDWATER_MAX_SCORE - min(avg_depth, GROUNDWATER_MAX_SCORE))
     density_component = min(1.0, count / 30.0)
     shallow_component = shallow_ratio * 2.0
-    return round(min(8.0, depth_component + density_component + shallow_component), 2)
+    return round(min(GROUNDWATER_MAX_SCORE, depth_component + density_component + shallow_component), 2)
 
 
 def _molit_groundwater_score_for_region(conn: sqlite3.Connection, region_id: int) -> float:
@@ -221,7 +226,7 @@ def _apply_ground_layer_adjustment(conn: sqlite3.Connection, row: dict, *, regio
     data["ground_layer_score"] = round(ground_layer_score, 2)
     data["ground_layer_nearby_count"] = int(summary.get("nearby_count") or 0)
     data["ground_layer_summary"] = summary
-    data["environment_score"] = min(6.0, base_environment_score + ground_layer_score)
+    data["environment_score"] = min(ENVIRONMENT_MAX_SCORE, base_environment_score + ground_layer_score)
     return data
 
 
@@ -296,7 +301,7 @@ def load_or_build_feature_row(conn: sqlite3.Connection, region_id: int, analysis
         """,
         (region_id, analysis_date, analysis_date),
     )["a"]
-    groundwater_score = min(8.0, float(groundwater_var_7d) * 4.0)  # variation 0~2 가정
+    groundwater_score = min(GROUNDWATER_MAX_SCORE, float(groundwater_var_7d) * (GROUNDWATER_MAX_SCORE / 2.0))
     if groundwater_score <= 0:
         groundwater_score = _molit_groundwater_score_for_region(conn, region_id)
 
@@ -311,7 +316,7 @@ def load_or_build_feature_row(conn: sqlite3.Connection, region_id: int, analysis
         """,
         (region_id,),
     ) or {"bd": 0.0, "rd": 0.0}
-    environment_score = min(6.0, (float(env["bd"]) + float(env["rd"])) * 3.0)  # 0~2 -> 0~6
+    environment_score = min(ENVIRONMENT_MAX_SCORE, (float(env["bd"]) + float(env["rd"])) * (ENVIRONMENT_MAX_SCORE / 2.0))
 
     construction_scale = query_one(
         conn,
@@ -410,7 +415,7 @@ def load_or_build_road_feature_row(conn: sqlite3.Connection, road_id: int, analy
         """,
         (road_id, analysis_date, analysis_date),
     )["a"]
-    groundwater_score = min(8.0, float(groundwater_var_7d) * 4.0)
+    groundwater_score = min(GROUNDWATER_MAX_SCORE, float(groundwater_var_7d) * (GROUNDWATER_MAX_SCORE / 2.0))
     if groundwater_score <= 0:
         groundwater_score = _molit_groundwater_score_for_road(conn, road_id)
 
@@ -428,7 +433,10 @@ def load_or_build_road_feature_row(conn: sqlite3.Connection, road_id: int, analy
         """,
         (road_id,),
     ) or {"bd": 0.0, "rd": 0.0, "dq": 0.0, "sg": 0.0}
-    environment_score = min(10.0, (float(env["bd"]) + float(env["rd"]) + float(env["dq"]) + float(env["sg"])) * 2.0)
+    environment_score = min(
+        ENVIRONMENT_MAX_SCORE,
+        (float(env["bd"]) + float(env["rd"]) + float(env["dq"]) + float(env["sg"])) * 2.0,
+    )
 
     construction_scale = query_one(
         conn,

@@ -3,6 +3,27 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 
+FACTOR_MAX_SCORES = {
+    "past_sinkhole": 25.0,
+    "gpr": 30.0,
+    "facility": 15.0,
+    "rainfall": 10.0,
+    "groundwater": 7.0,
+    "environment": 7.0,
+    "construction": 6.0,
+}
+
+FACTOR_MULTIPLIERS = {
+    "past_sinkhole": 8.0,
+    "gpr": 12.0,
+    "facility": 0.25,
+    "rainfall": 1.0,
+    "groundwater": 1.0,
+    "environment": 1.0,
+    "construction": 0.3,
+}
+
+
 @dataclass(frozen=True)
 class RiskBreakdown:
     past_sinkhole: float
@@ -50,12 +71,28 @@ def score_rule_based(features: dict) -> tuple[float, RiskBreakdown]:
     construction_score = float(features.get("construction_score") or 0)
 
     breakdown = RiskBreakdown(
-        past_sinkhole=clamp(past_sinkhole_count * 8.0, 0, 30),
-        gpr=clamp(gpr_detected_count * 12.0, 0, 30),
-        facility=clamp(facility_aging_score * 0.25, 0, 15),
-        rainfall=clamp(rainfall_score, 0, 10),
-        groundwater=clamp(groundwater_score, 0, 8),
-        environment=clamp(environment_score, 0, 6),
-        construction=clamp(construction_score * 0.2, 0, 4),
+        past_sinkhole=clamp(
+            past_sinkhole_count * FACTOR_MULTIPLIERS["past_sinkhole"],
+            0,
+            FACTOR_MAX_SCORES["past_sinkhole"],
+        ),
+        gpr=clamp(
+            gpr_detected_count * FACTOR_MULTIPLIERS["gpr"],
+            0,
+            FACTOR_MAX_SCORES["gpr"],
+        ),
+        facility=clamp(
+            facility_aging_score * FACTOR_MULTIPLIERS["facility"],
+            0,
+            FACTOR_MAX_SCORES["facility"],
+        ),
+        rainfall=clamp(rainfall_score, 0, FACTOR_MAX_SCORES["rainfall"]),
+        groundwater=clamp(groundwater_score, 0, FACTOR_MAX_SCORES["groundwater"]),
+        environment=clamp(environment_score, 0, FACTOR_MAX_SCORES["environment"]),
+        construction=clamp(
+            construction_score * FACTOR_MULTIPLIERS["construction"],
+            0,
+            FACTOR_MAX_SCORES["construction"],
+        ),
     )
     return clamp(breakdown.total), breakdown

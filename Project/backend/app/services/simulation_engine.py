@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from app.models.schemas import WhatIfRequest
-from app.services.risk_scoring import clamp, risk_level
+from app.services.risk_scoring import FACTOR_MAX_SCORES, FACTOR_MULTIPLIERS, clamp, risk_level
 
 
 FACTOR_LABELS = {
@@ -158,13 +158,29 @@ def normalize_scenario(req: WhatIfRequest) -> Scenario:
 
 def base_breakdown(row: dict) -> dict[str, float]:
     return {
-        "past_sinkhole": clamp(float(row.get("past_sinkhole_count") or 0) * 8.0, 0, 30),
-        "gpr": clamp(float(row.get("gpr_detected_count") or 0) * 12.0, 0, 30),
-        "facility": clamp(float(row.get("facility_aging_score") or 0) * 0.25, 0, 15),
-        "rainfall": clamp(float(row.get("rainfall_score") or 0), 0, 10),
-        "groundwater": clamp(float(row.get("groundwater_score") or 0), 0, 8),
-        "environment": clamp(float(row.get("environment_score") or 0), 0, 6),
-        "construction": clamp(float(row.get("construction_score") or 0) * 0.2, 0, 4),
+        "past_sinkhole": clamp(
+            float(row.get("past_sinkhole_count") or 0) * FACTOR_MULTIPLIERS["past_sinkhole"],
+            0,
+            FACTOR_MAX_SCORES["past_sinkhole"],
+        ),
+        "gpr": clamp(
+            float(row.get("gpr_detected_count") or 0) * FACTOR_MULTIPLIERS["gpr"],
+            0,
+            FACTOR_MAX_SCORES["gpr"],
+        ),
+        "facility": clamp(
+            float(row.get("facility_aging_score") or 0) * FACTOR_MULTIPLIERS["facility"],
+            0,
+            FACTOR_MAX_SCORES["facility"],
+        ),
+        "rainfall": clamp(float(row.get("rainfall_score") or 0), 0, FACTOR_MAX_SCORES["rainfall"]),
+        "groundwater": clamp(float(row.get("groundwater_score") or 0), 0, FACTOR_MAX_SCORES["groundwater"]),
+        "environment": clamp(float(row.get("environment_score") or 0), 0, FACTOR_MAX_SCORES["environment"]),
+        "construction": clamp(
+            float(row.get("construction_score") or 0) * FACTOR_MULTIPLIERS["construction"],
+            0,
+            FACTOR_MAX_SCORES["construction"],
+        ),
     }
 
 
@@ -196,13 +212,13 @@ def simulated_breakdown(row: dict, scenario: Scenario) -> dict[str, float]:
         construction_add = clamp(3.0 + (distance_factor * 5.0) + (depth_factor * 3.0), 0, 12)
 
     return {
-        "past_sinkhole": clamp(base["past_sinkhole"] + past_sinkhole_add, 0, 34),
-        "gpr": clamp(base["gpr"] + gpr_add, 0, 34),
-        "facility": clamp(base["facility"] + facility_add, 0, 18),
-        "rainfall": clamp(base["rainfall"] + rainfall_add, 0, 20),
-        "groundwater": clamp(base["groundwater"] + groundwater_add, 0, 14),
-        "environment": clamp(base["environment"] + environment_add, 0, 12),
-        "construction": clamp(base["construction"] + construction_add, 0, 12),
+        "past_sinkhole": clamp(base["past_sinkhole"] + past_sinkhole_add, 0, FACTOR_MAX_SCORES["past_sinkhole"]),
+        "gpr": clamp(base["gpr"] + gpr_add, 0, FACTOR_MAX_SCORES["gpr"]),
+        "facility": clamp(base["facility"] + facility_add, 0, FACTOR_MAX_SCORES["facility"]),
+        "rainfall": clamp(base["rainfall"] + rainfall_add, 0, FACTOR_MAX_SCORES["rainfall"]),
+        "groundwater": clamp(base["groundwater"] + groundwater_add, 0, FACTOR_MAX_SCORES["groundwater"]),
+        "environment": clamp(base["environment"] + environment_add, 0, FACTOR_MAX_SCORES["environment"]),
+        "construction": clamp(base["construction"] + construction_add, 0, FACTOR_MAX_SCORES["construction"]),
     }
 
 
@@ -390,6 +406,7 @@ def _factor_changes(
                 "base": round(base_value, 1),
                 "scenario": round(scenario_value, 1),
                 "final": round(final_value, 1),
+                "max_score": round(FACTOR_MAX_SCORES.get(key, 100.0), 1),
                 "increase": round(scenario_value - base_value, 1),
                 "mitigation": round(scenario_value - final_value, 1),
                 "net_delta": round(final_value - base_value, 1),

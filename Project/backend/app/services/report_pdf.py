@@ -115,7 +115,7 @@ def write_pdf(
             return y
         return current_y
 
-    summary = _extract_summary(raw_lines)
+    summary = _extract_summary(raw_lines, generated_at_text=generated)
     drivers = _extract_key_drivers(raw_lines)
     if summary:
         y = _draw_summary_panel(
@@ -194,17 +194,46 @@ def write_pdf(
     return report_path
 
 
-def _extract_summary(lines: list[str]) -> dict[str, str]:
+def _summary_value(value: Any) -> str:
+    text = str(value or "").strip()
+    if text in {"", "-", "None", "none", "null", "N/A", "n/a"}:
+        return ""
+    return text
+
+
+def _extract_date_text(value: Any) -> str:
+    text = str(value or "")
+    match = re.search(r"(\d{4})[-./](\d{1,2})[-./](\d{1,2})", text)
+    if match:
+        year, month, day = match.groups()
+        return f"{int(year):04d}-{int(month):02d}-{int(day):02d}"
+    match = re.search(r"(\d{4})\s*년\s*(\d{1,2})\s*월\s*(\d{1,2})\s*일", text)
+    if match:
+        year, month, day = match.groups()
+        return f"{int(year):04d}-{int(month):02d}-{int(day):02d}"
+    return ""
+
+
+def _extract_summary(lines: list[str], generated_at_text: str | None = None) -> dict[str, str]:
     summary: dict[str, str] = {}
     key_map = {
         "대상 지역": "target",
+        "대상 위치": "target",
+        "위치": "target",
         "Region": "target",
+        "Location": "target",
         "도로명 주소/대표 주소": "address",
+        "도로명 주소": "address",
+        "Road Address": "address",
+        "Address": "address",
         "분석 일자": "date",
+        "분석 날짜": "date",
         "분석일": "date",
         "Analysis Date": "date",
         "분석 시각(로컬)": "time",
         "Analysis Time (Local)": "time",
+        "생성 시각": "time",
+        "Generated": "time",
         "최종 위험도 점수": "score",
         "종합 위험도": "score",
         "Final Risk Score": "score",
@@ -214,11 +243,15 @@ def _extract_summary(lines: list[str]) -> dict[str, str]:
     }
     for raw in lines:
         text = str(raw).strip().lstrip("- ").strip()
-        if ":" not in text:
+        bracket_match = re.match(r"^\[([^\]]+)\]\s*(.+)$", text)
+        if bracket_match:
+            left, right = bracket_match.groups()
+        elif ":" in text:
+            left, right = text.split(":", 1)
+        else:
             continue
-        left, right = text.split(":", 1)
         left = left.strip()
-        right = right.strip()
+        right = _summary_value(right)
         if not right:
             continue
         for key, dest in key_map.items():
@@ -226,6 +259,19 @@ def _extract_summary(lines: list[str]) -> dict[str, str]:
                 if dest == "target" and left == "Region" and "Region ID" in text:
                     continue
                 summary[dest] = right
+                if dest in {"date", "time"} and "date" not in summary:
+                    date = _extract_date_text(right)
+                    if date:
+                        summary["date"] = date
+                break
+    if "target" not in summary and summary.get("address"):
+        summary["target"] = summary["address"]
+    if "date" not in summary:
+        for candidate in (summary.get("time"), generated_at_text):
+            date = _extract_date_text(candidate)
+            if date:
+                summary["date"] = date
+                break
     return summary
 
 
@@ -260,13 +306,13 @@ def _draw_summary_panel(
     ensure_space: Callable[[float, float], float],
 ) -> float:
     panel_w = width - margin_x * 2
-    target = summary.get("target") or "-"
-    address = summary.get("address") or ""
-    score = summary.get("score") or "-"
-    level = summary.get("level") or "-"
-    date = summary.get("date") or "-"
-    decision = summary.get("decision") or ""
-    target_text = target if not address else f"{target} / {address}"
+    target = _summary_value(summary.get("target")) or _summary_value(summary.get("address")) or "-"
+    address = _summary_value(summary.get("address"))
+    score = _summary_value(summary.get("score")) or "-"
+    level = _summary_value(summary.get("level")) or "-"
+    date = _summary_value(summary.get("date")) or "-"
+    decision = _summary_value(summary.get("decision"))
+    target_text = target if not address or address == target else f"{target} / {address}"
     target_chunks = _wrap_text(target_text, 76)[:3]
     decision_chunks = _wrap_text(f"Decision: {decision}", 76)[:2] if decision else []
     driver_rows = drivers[:3]

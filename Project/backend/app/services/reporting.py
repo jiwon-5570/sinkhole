@@ -9,9 +9,10 @@ import requests
 from app.config.settings import settings
 from app.db.core import query_one
 from app.services.addressing import region_road_address
+from app.services.risk_scoring import FACTOR_MAX_SCORES
 
 
-REPORT_TEMPLATE_VERSION = "operational-risk-report-v2-20260517"
+REPORT_TEMPLATE_VERSION = "operational-risk-report-v3-20260519"
 
 FACTOR_LABELS_KO = {
     "past_sinkhole": "과거 지반침하 사고",
@@ -21,16 +22,6 @@ FACTOR_LABELS_KO = {
     "groundwater": "지하수 변동",
     "environment": "환경/지층 요인",
     "construction": "굴착/공사 영향",
-}
-
-FACTOR_MAX_SCORES = {
-    "past_sinkhole": 30.0,
-    "gpr": 30.0,
-    "facility": 15.0,
-    "rainfall": 10.0,
-    "groundwater": 8.0,
-    "environment": 6.0,
-    "construction": 4.0,
 }
 
 FACTOR_FEATURE_KEYS = {

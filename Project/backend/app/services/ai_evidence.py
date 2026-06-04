@@ -6,6 +6,7 @@ from typing import Any
 
 from app.db.core import query_all, query_one
 from app.services.reasoning import FACTOR_LABELS
+from app.services.risk_scoring import FACTOR_MAX_SCORES, FACTOR_MULTIPLIERS
 
 
 FACTOR_ORDER = (
@@ -140,23 +141,31 @@ def _factor_values(factor_key: str, payload: dict[str, Any]) -> tuple[float, flo
 
 def _factor_formula_text(factor_key: str, feature_value: float, contribution: float) -> str:
     if factor_key == "past_sinkhole":
-        return f"산식은 min(30, 과거 침하 건수 x 8)입니다. 원자료 {feature_value:.1f}건이 반영되어 {contribution:.1f}점입니다."
+        max_score = FACTOR_MAX_SCORES["past_sinkhole"]
+        multiplier = FACTOR_MULTIPLIERS["past_sinkhole"]
+        return f"산식은 min({max_score:.0f}, 과거 침하 건수 x {multiplier:g})입니다. 원자료 {feature_value:.1f}건이 반영되어 {contribution:.1f}점입니다."
     if factor_key == "gpr":
-        return f"산식은 min(30, GPR/탐사 지표 x 12)입니다. 원자료 {feature_value:.1f}건 상당이 반영되어 {contribution:.1f}점입니다."
+        max_score = FACTOR_MAX_SCORES["gpr"]
+        multiplier = FACTOR_MULTIPLIERS["gpr"]
+        return f"산식은 min({max_score:.0f}, GPR/탐사 지표 x {multiplier:g})입니다. 원자료 {feature_value:.1f}건 상당이 반영되어 {contribution:.1f}점입니다."
     if factor_key == "facility":
-        uncapped = feature_value * 0.25
-        cap_text = "상한 15점에 걸려 15점으로 제한됐습니다" if uncapped > 15 else "상한에는 걸리지 않았습니다"
-        return f"산식은 min(15, 시설물 노후도 원자료 지표 x 0.25)입니다. {feature_value:.1f} x 0.25 = {uncapped:.1f}점이고, {cap_text}."
+        max_score = FACTOR_MAX_SCORES["facility"]
+        multiplier = FACTOR_MULTIPLIERS["facility"]
+        uncapped = feature_value * multiplier
+        cap_text = f"상한 {max_score:.0f}점에 걸려 {max_score:.0f}점으로 제한됐습니다" if uncapped > max_score else "상한에는 걸리지 않았습니다"
+        return f"산식은 min({max_score:.0f}, 시설물 노후도 원자료 지표 x {multiplier:g})입니다. {feature_value:.1f} x {multiplier:g} = {uncapped:.1f}점이고, {cap_text}."
     if factor_key == "rainfall":
         return f"최근 7일 강우 지표를 0~10점 범위로 반영합니다. 현재 원자료 {feature_value:.1f}점이 {contribution:.1f}점으로 반영됐습니다."
     if factor_key == "groundwater":
-        return f"지하수 변동 또는 시추공 지하수위 대체 지표를 0~8점 범위로 반영합니다. 현재 원자료 {feature_value:.1f}점이 {contribution:.1f}점으로 반영됐습니다."
+        return f"지하수 변동 또는 시추공 지하수위 대체 지표를 0~{FACTOR_MAX_SCORES['groundwater']:.0f}점 범위로 반영합니다. 현재 원자료 {feature_value:.1f}점이 {contribution:.1f}점으로 반영됐습니다."
     if factor_key == "environment":
-        return f"건물/도로 밀집도와 지층 보정값을 0~6점 범위로 반영합니다. 현재 원자료 {feature_value:.1f}점이 {contribution:.1f}점으로 반영됐습니다."
+        return f"건물/도로 밀집도와 지층 보정값을 0~{FACTOR_MAX_SCORES['environment']:.0f}점 범위로 반영합니다. 현재 원자료 {feature_value:.1f}점이 {contribution:.1f}점으로 반영됐습니다."
     if factor_key == "construction":
-        uncapped = feature_value * 0.2
-        cap_text = "상한 4점에 걸렸습니다" if uncapped > 4 else "상한에는 걸리지 않았습니다"
-        return f"산식은 min(4, 공사 영향 원자료 지표 x 0.2)입니다. {feature_value:.1f} x 0.2 = {uncapped:.1f}점이고, {cap_text}."
+        max_score = FACTOR_MAX_SCORES["construction"]
+        multiplier = FACTOR_MULTIPLIERS["construction"]
+        uncapped = feature_value * multiplier
+        cap_text = f"상한 {max_score:.0f}점에 걸렸습니다" if uncapped > max_score else "상한에는 걸리지 않았습니다"
+        return f"산식은 min({max_score:.0f}, 공사 영향 원자료 지표 x {multiplier:g})입니다. {feature_value:.1f} x {multiplier:g} = {uncapped:.1f}점이고, {cap_text}."
     return f"원자료 {feature_value:.1f}, 기여점수 {contribution:.1f}점입니다."
 
 

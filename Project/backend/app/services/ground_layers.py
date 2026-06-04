@@ -5,8 +5,11 @@ from math import atan2, cos, radians, sin, sqrt
 import sqlite3
 from typing import Any
 
+from app.services.risk_scoring import FACTOR_MAX_SCORES
+
 
 DEFAULT_RADIUS_M = 1500.0
+ENVIRONMENT_MAX_SCORE = FACTOR_MAX_SCORES["environment"]
 
 
 def _num(value: Any, default: float = 0.0) -> float:
@@ -71,7 +74,7 @@ def _layer_risk_score(row: dict[str, Any]) -> float:
     thickness = _num(row.get("thickness_m"))
     if thickness >= 5.0 and score >= 2.0:
         score += 0.5
-    return max(0.0, min(6.0, score))
+    return max(0.0, min(ENVIRONMENT_MAX_SCORE, score))
 
 
 def summarize_ground_layers_near(
@@ -148,7 +151,7 @@ def summarize_ground_layers_near(
     scoring_rows = nearby[: max(limit, 1)]
     max_score = max(float(item["risk_score"]) for item in scoring_rows)
     avg_score = sum(float(item["risk_score"]) for item in scoring_rows) / len(scoring_rows)
-    score = min(6.0, max(max_score, avg_score + min(len(scoring_rows), 10) * 0.08))
+    score = min(ENVIRONMENT_MAX_SCORE, max(max_score, avg_score + min(len(scoring_rows), 10) * 0.08))
 
     layer_counter = Counter(
         str(item.get("layer_name") or item.get("soil_class") or "미분류").strip() or "미분류"
@@ -196,4 +199,3 @@ def summarize_ground_layers_for_road(conn: sqlite3.Connection, road_id: int) -> 
     if not row:
         return {"available": False, "reason": "road not found", "score": 0.0}
     return summarize_ground_layers_near(conn, row["center_lat"], row["center_lon"])
-

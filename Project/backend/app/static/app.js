@@ -2919,7 +2919,7 @@ renderWhatIfResults = function (rows = []) {
           <div>
             <span>${escapeHtml(item.label || item.factor || "-")}</span>
             <b>${formatNumber(item.base, 1)} → ${formatNumber(item.scenario, 1)} → ${formatNumber(item.final, 1)}</b>
-            <i><em style="width:${Math.max(2, Math.min(100, Number(item.final || 0) * 5))}%"></em></i>
+            <i><em style="width:${Math.max(2, Math.min(100, (Number(item.final || 0) / Math.max(Number(item.max_score || 20), 1)) * 100))}%"></em></i>
             <small>상승 ${Number(item.increase || 0) >= 0 ? "+" : ""}${formatNumber(item.increase, 1)} / 조치 -${formatNumber(item.mitigation, 1)}</small>
           </div>
         `).join("")}
@@ -2952,7 +2952,7 @@ window.__sinkholeActions = {
   closeAiChat,
 };
 window.__sinkholeAppReady = true;
-window.__sinkholeAssetVersion = "20260519-top5-location-fill";
+window.__sinkholeAssetVersion = "20260519-score-allocation";
 
 bootstrap().catch((error) => {
   console.error(error);
