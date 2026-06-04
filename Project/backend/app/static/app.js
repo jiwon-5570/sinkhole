@@ -3,7 +3,7 @@
 const $ = (id) => document.getElementById(id);
 
 const state = {
-  mode: "scenario",
+  mode: "live",
   analysisType: "region",
   regions: [],
   roads: [],
@@ -422,12 +422,36 @@ function topRiskRowAddress(row) {
   return row?.road_name || row?.region_name || row?.name || row?.label || "";
 }
 
+function topRiskRowTarget(row) {
+  const region = row?.region_id
+    ? state.regions.find((item) => Number(item.region_id) === Number(row.region_id))
+    : null;
+  const road = row?.road_id
+    ? state.roads.find((item) => Number(item.road_id) === Number(row.road_id))
+    : null;
+  const latitude = Number(row?.latitude ?? row?.center_lat ?? row?.lat ?? road?.center_lat ?? region?.latitude);
+  const longitude = Number(row?.longitude ?? row?.center_lon ?? row?.lng ?? row?.lon ?? road?.center_lon ?? region?.longitude);
+  const address = topRiskRowAddress({
+    ...row,
+    ...region,
+    ...road,
+    road_address: row?.road_address || road?.road_address || region?.road_address,
+  });
+  return {
+    address,
+    latitude,
+    longitude,
+    zoom: row?.road_id ? 16 : 15,
+  };
+}
+
 function setLocationSearchFromTopRisk(row) {
   const address = topRiskRowAddress(row);
   if (!address || address === "도로명 주소 확인 필요") return "";
 
-  const latitude = Number(row?.latitude ?? row?.center_lat ?? row?.lat);
-  const longitude = Number(row?.longitude ?? row?.center_lon ?? row?.lng ?? row?.lon);
+  const target = topRiskRowTarget(row);
+  const latitude = Number(target.latitude);
+  const longitude = Number(target.longitude);
   state.liveLocation = {
     ...state.liveLocation,
     name: address,
@@ -438,6 +462,9 @@ function setLocationSearchFromTopRisk(row) {
     latitude: Number.isFinite(latitude) ? latitude : state.liveLocation.latitude,
     longitude: Number.isFinite(longitude) ? longitude : state.liveLocation.longitude,
   };
+  if (Number.isFinite(latitude) && Number.isFinite(longitude)) {
+    state.mapView = { latitude, longitude, zoom: target.zoom };
+  }
   if (el.liveLocationInput) el.liveLocationInput.value = address;
   return address;
 }
@@ -747,7 +774,10 @@ function renderTopRisk(rows = []) {
         selectedAddress = setLocationSearchFromTopRisk(row) || selectedAddress;
         await runScenarioAnalysis();
       }
-      if (selectedAddress && el.liveLocationInput) el.liveLocationInput.value = selectedAddress;
+      if (selectedAddress) {
+        if (el.liveLocationInput) el.liveLocationInput.value = selectedAddress;
+        renderMap({ forceMapFrame: true });
+      }
     });
     el.topRiskBody.appendChild(tr);
   });
@@ -964,21 +994,28 @@ function renderCauseDistribution(rows = []) {
   }
 }
 
-async function refreshRegionalCharts() {
-  if (state.mode !== "scenario" || !state.selectedRegionId || state.analysisType !== "region") {
+function chartRegionId(payload = state.currentPayload) {
+  const referenceRegionId = payload?.data_coverage?.reference_region?.region_id;
+  const directRegionId = payload?.region?.region_id;
+  const regionId = Number(referenceRegionId || directRegionId || state.selectedRegionId);
+  return Number.isFinite(regionId) && regionId > 0 ? regionId : null;
+}
+
+async function refreshRegionalCharts(regionId = chartRegionId()) {
+  const targetRegionId = Number(regionId);
+  if (!Number.isFinite(targetRegionId) || targetRegionId <= 0 || (state.mode === "scenario" && state.analysisType !== "region")) {
     renderTrendChart([]);
     renderCauseDistribution([]);
     return;
   }
-  const regionId = Number(state.selectedRegionId);
   const [trend, cause] = await Promise.allSettled([
-    api(`/api/charts/risk-trend?region_id=${regionId}`),
-    api(`/api/charts/sinkhole-cause-distribution?region_id=${regionId}`),
+    api(`/api/charts/risk-trend?region_id=${targetRegionId}`),
+    api(`/api/charts/sinkhole-cause-distribution?region_id=${targetRegionId}`),
   ]);
   if (trend.status === "fulfilled" && trend.value.length) {
     renderTrendChart(trend.value, "risk");
   } else {
-    const fallback = await api(`/api/charts/sinkhole-occurrence-trend?region_id=${regionId}&months=24`).catch(() => []);
+    const fallback = await api(`/api/charts/sinkhole-occurrence-trend?region_id=${targetRegionId}&months=24`).catch(() => []);
     renderTrendChart(fallback, "occurrence");
   }
   renderCauseDistribution(cause.status === "fulfilled" ? cause.value : []);
@@ -2014,8 +2051,12 @@ async function runLiveAnalysis(clock = getClientClock()) {
   };
   if (el.liveLocationInput) el.liveLocationInput.value = address;
   renderResult(address, displayPayload);
-  renderTrendChart([]);
-  renderCauseDistribution([]);
+  const referenceRegionId = chartRegionId(displayPayload);
+  if (referenceRegionId) {
+    state.selectedRegionId = referenceRegionId;
+    if (el.regionSelect) el.regionSelect.value = String(referenceRegionId);
+  }
+  await refreshRegionalCharts(referenceRegionId);
 }
 
 async function runAnalysis() {
@@ -2739,6 +2780,7 @@ function bindEvents() {
     await loadRoads(state.selectedRegionId);
     renderMap();
     if (state.mode === "scenario" && state.analysisType === "region") await runScenarioAnalysis();
+    else if (state.mode === "live") await refreshRegionalCharts(state.selectedRegionId);
   });
   el.roadSelect?.addEventListener("change", () => {
     state.selectedRoadId = Number(el.roadSelect.value) || null;
@@ -2803,10 +2845,10 @@ async function bootstrap() {
     await loadMonitoringPoints({ refresh: true, force: true }).catch((error) => console.warn("monitoring refresh failed", error));
     await refreshSummaryPanels();
     startDashboardAutoRefresh();
-    setMode("scenario", { silent: true });
+    setMode("live", { silent: true });
+    await refreshRegionalCharts();
     updateWhatIfControls();
     renderWhatIfResults(state.simulationRows);
-    if (state.selectedRegionId) await runScenarioAnalysis(clock, { manageBusy: false });
     await refreshReportList();
     setStatus(t().ready);
   } catch (error) {
@@ -2952,7 +2994,7 @@ window.__sinkholeActions = {
   closeAiChat,
 };
 window.__sinkholeAppReady = true;
-window.__sinkholeAssetVersion = "20260519-score-allocation";
+window.__sinkholeAssetVersion = "20260604-top-risk-map";
 
 bootstrap().catch((error) => {
   console.error(error);
