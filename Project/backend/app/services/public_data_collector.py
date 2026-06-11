@@ -20,6 +20,7 @@ from app.config.settings import settings
 from app.db.core import connect, query_all, query_one
 from app.services.features import today_str
 from app.services.local_construction_importer import SOURCE_NAME as LOCAL_CONSTRUCTION_SOURCE_NAME
+from app.services.real_data_targets import ensure_public_ground_regions
 from app.services.seoul_open_data_collector import collect_seoul_open_data_once
 
 
@@ -2448,6 +2449,17 @@ def collect_public_data_once() -> dict[str, Any]:
                 source_results.append(result)
                 if any(_is_network_wide_error(error) for error in result["errors"]):
                     break
+
+        generated_region_count = ensure_public_ground_regions(conn)
+        if generated_region_count:
+            regions = query_all(
+                conn,
+                """
+                SELECT region_id, region_name, latitude, longitude, sido, sigungu
+                FROM regions
+                ORDER BY region_id
+                """,
+            )
 
         _clear_rebuilt_public_tables(conn)
         raw_normalized_count = _renormalize_raw_records(conn, regions)

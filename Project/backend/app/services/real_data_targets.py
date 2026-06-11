@@ -33,6 +33,7 @@ REGION_ID_BASE = 900001
 GRID_SIZE_DEGREES = 0.05
 DEFAULT_TARGET_LIMIT = len(SEOUL_METRO_TARGET_LABELS)
 MIN_BOREHOLES_PER_TARGET = 100
+ROAD_AXIS_HALF_SPAN_DEGREES = 0.0045
 
 
 def _table_count(conn: sqlite3.Connection, table_name: str) -> int:
@@ -170,6 +171,90 @@ def _candidate_cells(conn: sqlite3.Connection, limit: int) -> list[dict[str, Any
     return [dict(row) for row in rows]
 
 
+def _generated_public_regions(conn: sqlite3.Connection) -> list[dict[str, Any]]:
+    rows = conn.execute(
+        """
+        SELECT region_id, region_name, latitude, longitude
+        FROM regions
+        WHERE COALESCE(region_type, '') = 'public_ground_cluster'
+          AND latitude IS NOT NULL
+          AND longitude IS NOT NULL
+        ORDER BY region_id
+        """
+    ).fetchall()
+    return [dict(row) for row in rows]
+
+
+def _ensure_public_ground_roads(conn: sqlite3.Connection) -> int:
+    inserted = 0
+    for region in _generated_public_regions(conn):
+        region_id = int(region["region_id"])
+        existing = query_one(
+            conn,
+            "SELECT COUNT(*) AS count FROM road_segments WHERE region_id = ?",
+            (region_id,),
+        )
+        if int((existing or {}).get("count") or 0) > 0:
+            continue
+
+        latitude = float(region["latitude"])
+        longitude = float(region["longitude"])
+        axes = (
+            (
+                1,
+                "inspection east-west axis",
+                latitude,
+                longitude - ROAD_AXIS_HALF_SPAN_DEGREES,
+                latitude,
+                longitude + ROAD_AXIS_HALF_SPAN_DEGREES,
+            ),
+            (
+                2,
+                "inspection north-south axis",
+                latitude - ROAD_AXIS_HALF_SPAN_DEGREES,
+                longitude,
+                latitude + ROAD_AXIS_HALF_SPAN_DEGREES,
+                longitude,
+            ),
+        )
+        for axis_index, road_name, start_lat, start_lon, end_lat, end_lon in axes:
+            road_id = region_id * 10 + axis_index
+            geometry = {
+                "source": "molit_ground_boreholes",
+                "method": "public_ground_cluster_axis",
+                "region_id": region_id,
+                "axis": axis_index,
+            }
+            before_changes = conn.total_changes
+            conn.execute(
+                """
+                INSERT OR IGNORE INTO road_segments(
+                    road_id, region_id, road_name, road_type,
+                    start_lat, start_lon, end_lat, end_lon,
+                    center_lat, center_lon, length_m, geometry
+                )
+                VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    road_id,
+                    region_id,
+                    road_name,
+                    "public_ground_inspection_axis",
+                    start_lat,
+                    start_lon,
+                    end_lat,
+                    end_lon,
+                    latitude,
+                    longitude,
+                    1000.0,
+                    json.dumps(geometry, ensure_ascii=False),
+                ),
+            )
+            if conn.total_changes > before_changes:
+                inserted += 1
+    return inserted
+
+
 def ensure_public_ground_regions(conn: sqlite3.Connection, limit: int = DEFAULT_TARGET_LIMIT) -> int:
     """Create operational analysis targets only from imported public borehole data.
 
@@ -178,10 +263,21 @@ def ensure_public_ground_regions(conn: sqlite3.Connection, limit: int = DEFAULT_
     builds Seoul/metropolitan grid targets from actual MOLIT borehole density.
     """
 
-    if not _is_replaceable_generated_regions(conn):
-        return 0
     if not _has_molit_ground_coordinates(conn):
         return 0
+
+    if not _is_replaceable_generated_regions(conn):
+        non_generated = query_one(
+            conn,
+            """
+            SELECT COUNT(*) AS count
+            FROM regions
+            WHERE COALESCE(region_type, '') != 'public_ground_cluster'
+            """,
+        )
+        if int((non_generated or {}).get("count") or 0) > 0:
+            return 0
+        return _ensure_public_ground_roads(conn)
 
     _clear_generated_regions(conn)
     candidates = _candidate_cells(conn, limit)
@@ -214,4 +310,4 @@ def ensure_public_ground_regions(conn: sqlite3.Connection, limit: int = DEFAULT_
             ),
         )
         inserted += 1
-    return inserted
+    return inserted + _ensure_public_ground_roads(conn)
